@@ -57,11 +57,18 @@ jobs:
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev
 
-      # Configure
-      - name: Configure
+      # Configure Windows
+      - name: Configure Windows
+        if: runner.os == 'Windows'
         run: |
-          cmake -B build -G Ninja ${{ runner.os == 'Windows' && format('-A {0}', matrix.arch) || '' }}
+          cmake -B build
 
+      # Configure Linux/macOS
+      - name: Configure Unix
+        if: runner.os != 'Windows'
+        run: |
+          cmake -B build -G Ninja
+          
       # Build
       - name: Build
         run: |
