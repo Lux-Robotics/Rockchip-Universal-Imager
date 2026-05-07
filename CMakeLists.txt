@@ -17,7 +17,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(webview)
 
-add_executable(hardware-helper)
+add_executable(hardware-helper WIN32)
 
 target_sources(hardware-helper PRIVATE
     src/main.cpp

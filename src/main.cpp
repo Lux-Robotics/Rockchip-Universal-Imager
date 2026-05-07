@@ -2,7 +2,19 @@
 
 #include <iostream>
 
-int main() {
+#ifdef _WIN32
+
+#include <windows.h>
+
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+
+#else
+
+int main()
+
+#endif
+
+{
     try {
         webview::webview w(false, nullptr);
 
@@ -24,7 +36,7 @@ int main() {
             ">
                 <div>
                     <h1>Hello World</h1>
-                    <p>Cross-platform CI works.</p>
+                    <p>GUI subsystem works.</p>
                 </div>
             </body>
             </html>
