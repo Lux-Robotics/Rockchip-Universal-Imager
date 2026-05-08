@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   RKDEV_REPO: https://github.com/lux-robotics/rkdeveloptool.git
   RKDEV_TAG: master
 
@@ -72,6 +73,11 @@ jobs:
             ${{ matrix.msys2_libusb }}
             ${{ matrix.msys2_toolchain }}
 
+      - name: Ensure MSYS2 Toolchain
+        if: runner.os == 'Windows' && matrix.rkdev_enable
+        run: |
+          C:/msys64/usr/bin/bash.exe -lc "case '${{ matrix.msystem }}' in MINGW64) ROOT=/mingw64;; CLANGARM64) ROOT=/clangarm64;; esac; export MSYSTEM=${{ matrix.msystem }}; export PATH=$ROOT/bin:/usr/bin; pacman -S --noconfirm --needed autoconf automake libtool pkgconf make ${{ matrix.msys2_toolchain }} ${{ matrix.msys2_libusb }}"
+
       # Linux dependencies
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
@@ -96,7 +102,11 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install libusb autoconf automake libtool pkg-config
+          brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
+          brew list libusb >/dev/null 2>&1 || brew install libusb
+          brew list autoconf >/dev/null 2>&1 || brew install autoconf
+          brew list automake >/dev/null 2>&1 || brew install automake
+          brew list libtool >/dev/null 2>&1 || brew install libtool
 
       # Configure Windows
       - name: Configure Windows
