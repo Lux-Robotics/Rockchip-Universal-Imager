@@ -43,6 +43,17 @@ set(RKDEV_PREFIX ${CMAKE_BINARY_DIR}/rkdeveloptool/install)
 set(RKDEV_SOURCE_DIR ${CMAKE_BINARY_DIR}/rkdeveloptool/src)
 set(RKDEV_OUTPUT_BIN ${RKDEV_PREFIX}/bin/${RKDEV_BINARY_NAME})
 set(RKDEV_MSYS_SCRIPT ${CMAKE_SOURCE_DIR}/cmake/rkdev_msys.sh)
+set(RKDEV_LIBUSB_DYLIB "")
+if(APPLE)
+    foreach(candidate
+            "/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib"
+            "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib")
+        if(EXISTS "${candidate}")
+            set(RKDEV_LIBUSB_DYLIB "${candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
 
 if(RKDEV_ENABLE)
     include(ExternalProject)
@@ -88,6 +99,22 @@ if(RKDEV_ENABLE)
                     ${RKDEV_PREFIX}/bin
                     $<TARGET_FILE_DIR:hardware-helper>
         )
+    elseif(APPLE)
+        add_custom_command(TARGET hardware-helper POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${RKDEV_OUTPUT_BIN}
+                    $<TARGET_FILE_DIR:hardware-helper>
+        )
+        if(RKDEV_LIBUSB_DYLIB)
+            add_custom_command(TARGET hardware-helper POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${RKDEV_LIBUSB_DYLIB}
+                        $<TARGET_FILE_DIR:hardware-helper>
+                COMMAND install_name_tool -add_rpath "@executable_path" $<TARGET_FILE_DIR:hardware-helper>/${RKDEV_BINARY_NAME}
+                COMMAND install_name_tool -change "/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" $<TARGET_FILE_DIR:hardware-helper>/${RKDEV_BINARY_NAME}
+                COMMAND install_name_tool -change "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" $<TARGET_FILE_DIR:hardware-helper>/${RKDEV_BINARY_NAME}
+            )
+        endif()
     else()
         add_custom_command(TARGET hardware-helper POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
