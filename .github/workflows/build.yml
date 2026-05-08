@@ -97,7 +97,7 @@ jobs:
       - name: Configure Windows
         if: runner.os == 'Windows'
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} -DRKDEV_REPO=${{ env.RKDEV_REPO }} -DRKDEV_TAG=${{ env.RKDEV_TAG }} -DRKDEV_BASH=C:/msys64/usr/bin/bash.exe -DRKDEV_MSYSTEM=${{ matrix.msystem }}
+          cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} -DRKDEV_REPO=${{ env.RKDEV_REPO }} -DRKDEV_TAG=${{ env.RKDEV_TAG }} -DRKDEV_BASH=C:/msys64/usr/bin/bash.exe -DRKDEV_MSYSTEM=${{ matrix.msystem }} -DRKDEV_DEBUG=ON
 
       # Configure Linux
       - name: Configure Linux
