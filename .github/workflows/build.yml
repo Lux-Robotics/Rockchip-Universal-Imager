@@ -76,12 +76,12 @@ jobs:
       - name: MSYS2 Sanity Check
         if: runner.os == 'Windows'
         run: |
-          C:/msys64/usr/bin/bash.exe -lc "export MSYSTEM=${{ matrix.msystem }}; export PATH=/${{ matrix.msystem_lower }}/bin:/usr/bin; export PKG_CONFIG_PATH=/${{ matrix.msystem_lower }}/lib/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig; echo MSYSTEM=$MSYSTEM; which autoreconf; autoreconf --version; which make; make --version; which gcc; gcc --version; which clang; clang --version; pkg-config --version; pkg-config --cflags --libs libusb-1.0; pacman -Q autoconf automake libtool; echo PATH=$PATH"
+          C:/msys64/usr/bin/bash.exe -lc "export MSYSTEM=${{ matrix.msystem }}; export PATH=/${{ matrix.msystem_lower }}/bin:/usr/bin; export PKG_CONFIG_PATH=/${{ matrix.msystem_lower }}/lib/pkgconfig:/${{ matrix.msystem_lower }}/share/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig; export PKG_CONFIG_LIBDIR=/${{ matrix.msystem_lower }}/lib/pkgconfig:/${{ matrix.msystem_lower }}/share/pkgconfig; echo MSYSTEM=$MSYSTEM; which autoreconf; autoreconf --version; which make; make --version; which gcc; gcc --version; which clang; clang --version; pkg-config --version; pkg-config --cflags --libs libusb-1.0; pacman -Q autoconf automake libtool ${{ matrix.msys2_libusb }}; echo PATH=$PATH"
 
       - name: Ensure MSYS2 autotools
         if: runner.os == 'Windows'
         run: |
-          C:/msys64/usr/bin/bash.exe -lc "export MSYSTEM=${{ matrix.msystem }}; export PATH=/${{ matrix.msystem_lower }}/bin:/usr/bin; pacman -S --noconfirm --needed make autoconf automake libtool ${{ matrix.msys2_toolchain }}"
+          C:/msys64/usr/bin/bash.exe -lc "export MSYSTEM=${{ matrix.msystem }}; export PATH=/${{ matrix.msystem_lower }}/bin:/usr/bin; pacman -S --noconfirm --needed make autoconf automake libtool ${{ matrix.msys2_toolchain }} ${{ matrix.msys2_libusb }}"
 
       # Linux dependencies
       - name: Install Linux Dependencies
