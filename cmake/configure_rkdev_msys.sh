@@ -11,12 +11,13 @@ fi
 
 cd "$SRC_DIR"
 
-if [[ ! -x "./configure" ]]; then
+if [[ -f "./configure" ]]; then
+  sh ./configure --prefix="$PREFIX"
+else
   if [[ -x "./autogen.sh" ]]; then
     ./autogen.sh
   else
     autoreconf -i
   fi
+  sh ./configure --prefix="$PREFIX"
 fi
-
-./configure --prefix="$PREFIX"
