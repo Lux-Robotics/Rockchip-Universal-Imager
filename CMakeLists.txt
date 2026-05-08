@@ -40,7 +40,13 @@ else()
 endif()
 
 set(RKDEV_PREFIX ${CMAKE_BINARY_DIR}/rkdeveloptool/install)
-set(RKDEV_BIN ${RKDEV_PREFIX}/bin/${RKDEV_BINARY_NAME})
+set(RKDEV_SOURCE_DIR ${CMAKE_BINARY_DIR}/rkdeveloptool/src)
+set(RKDEV_BUILT_BIN ${RKDEV_SOURCE_DIR}/${RKDEV_BINARY_NAME})
+if(WIN32)
+    set(RKDEV_OUTPUT_BIN ${RKDEV_BUILT_BIN})
+else()
+    set(RKDEV_OUTPUT_BIN ${RKDEV_PREFIX}/bin/${RKDEV_BINARY_NAME})
+endif()
 
 if(RKDEV_ENABLE)
     include(ExternalProject)
@@ -59,7 +65,7 @@ if(RKDEV_ENABLE)
         set(RKDEV_PATH_PREFIX "/${RKDEV_MSYSTEM_LOWER}/bin:/usr/bin")
         set(RKDEV_CONFIGURE_CMD ${RKDEV_BASH} -lc "export MSYSTEM=${RKDEV_MSYSTEM}; export PATH=${RKDEV_PATH_PREFIX}:$PATH; cd \"<SOURCE_DIR>\" && ./autogen.sh && ./configure --prefix=\"${RKDEV_PREFIX_POSIX}\"")
         set(RKDEV_BUILD_CMD ${RKDEV_BASH} -lc "export MSYSTEM=${RKDEV_MSYSTEM}; export PATH=${RKDEV_PATH_PREFIX}:$PATH; cd \"<SOURCE_DIR>\" && make")
-        set(RKDEV_INSTALL_CMD ${RKDEV_BASH} -lc "export MSYSTEM=${RKDEV_MSYSTEM}; export PATH=${RKDEV_PATH_PREFIX}:$PATH; cd \"<SOURCE_DIR>\" && make install")
+        set(RKDEV_INSTALL_CMD "")
     else()
         set(RKDEV_CONFIGURE_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && ./autogen.sh && ./configure --prefix=\"${RKDEV_PREFIX}\"")
         set(RKDEV_BUILD_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && make")
@@ -70,19 +76,19 @@ if(RKDEV_ENABLE)
         GIT_REPOSITORY ${RKDEV_REPO}
         GIT_TAG ${RKDEV_TAG}
         UPDATE_COMMAND ""
-        SOURCE_DIR ${CMAKE_BINARY_DIR}/rkdeveloptool/src
+        SOURCE_DIR ${RKDEV_SOURCE_DIR}
         BUILD_IN_SOURCE 1
         CONFIGURE_COMMAND ${RKDEV_CONFIGURE_CMD}
         BUILD_COMMAND ${RKDEV_BUILD_CMD}
         INSTALL_COMMAND ${RKDEV_INSTALL_CMD}
-        BUILD_BYPRODUCTS ${RKDEV_BIN}
+        BUILD_BYPRODUCTS ${RKDEV_OUTPUT_BIN}
     )
 
     add_dependencies(hardware-helper rkdeveloptool_ext)
 
     add_custom_command(TARGET hardware-helper POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${RKDEV_BIN}
+                ${RKDEV_OUTPUT_BIN}
                 $<TARGET_FILE_DIR:hardware-helper>
     )
 endif()
