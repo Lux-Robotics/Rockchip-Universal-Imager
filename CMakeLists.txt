@@ -97,6 +97,8 @@ if(RKDEV_ENABLE)
                     -DRKDEV_SEARCH_ROOT=${RKDEV_SEARCH_ROOT}
                     -DRKDEV_BINARY_NAME=${RKDEV_BINARY_NAME}
                     -DRKDEV_ALT_BINARY_NAME=${RKDEV_ALT_BINARY_NAME}
+                    -DRKDEV_BASH=${RKDEV_BASH}
+                    -DRKDEV_MSYSTEM=${RKDEV_MSYSTEM}
                     -DRKDEV_DEST_DIR=$<TARGET_FILE_DIR:hardware-helper>
                     -P ${RKDEV_COPY_SCRIPT}
         )

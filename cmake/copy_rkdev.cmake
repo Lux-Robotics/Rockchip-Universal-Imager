@@ -11,6 +11,47 @@ if(NOT DEFINED RKDEV_DEST_DIR)
   message(FATAL_ERROR "RKDEV_DEST_DIR not set")
 endif()
 
+if(DEFINED RKDEV_BASH AND EXISTS "${RKDEV_BASH}")
+  if(NOT DEFINED RKDEV_MSYSTEM OR RKDEV_MSYSTEM STREQUAL "")
+    set(RKDEV_MSYSTEM "MINGW64")
+  endif()
+  string(TOLOWER "${RKDEV_MSYSTEM}" RKDEV_MSYSTEM_LOWER)
+  set(RKDEV_PATH_PREFIX "/${RKDEV_MSYSTEM_LOWER}/bin:/usr/bin")
+  file(TO_CMAKE_PATH "${RKDEV_SEARCH_ROOT}" RKDEV_SEARCH_ROOT_POSIX)
+
+  set(RKDEV_FIND_EXPR "-name '${RKDEV_BINARY_NAME}'")
+  if(RKDEV_ALT_BINARY_NAME)
+    set(RKDEV_FIND_EXPR "( -name '${RKDEV_BINARY_NAME}' -o -name '${RKDEV_ALT_BINARY_NAME}' )")
+  endif()
+
+  execute_process(
+    COMMAND ${RKDEV_BASH} -lc "export MSYSTEM=${RKDEV_MSYSTEM}; export PATH=${RKDEV_PATH_PREFIX}:$PATH; find \"${RKDEV_SEARCH_ROOT_POSIX}\" -type f ${RKDEV_FIND_EXPR} -print -quit"
+    OUTPUT_VARIABLE RKDEV_FIND_OUT
+    RESULT_VARIABLE RKDEV_FIND_RESULT
+  )
+  string(STRIP "${RKDEV_FIND_OUT}" RKDEV_FIND_OUT)
+  if(RKDEV_FIND_RESULT EQUAL 0 AND NOT RKDEV_FIND_OUT STREQUAL "")
+    execute_process(
+      COMMAND ${RKDEV_BASH} -lc "cygpath -w \"${RKDEV_FIND_OUT}\""
+      OUTPUT_VARIABLE RKDEV_SRC
+      RESULT_VARIABLE RKDEV_CYGPATH_RESULT
+    )
+    string(STRIP "${RKDEV_SRC}" RKDEV_SRC)
+    if(RKDEV_CYGPATH_RESULT EQUAL 0 AND NOT RKDEV_SRC STREQUAL "")
+      message(STATUS "Using rkdeveloptool binary at ${RKDEV_SRC}")
+      file(MAKE_DIRECTORY "${RKDEV_DEST_DIR}")
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RKDEV_SRC}" "${RKDEV_DEST_DIR}"
+        RESULT_VARIABLE RKDEV_COPY_RESULT
+      )
+      if(NOT RKDEV_COPY_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to copy rkdeveloptool from '${RKDEV_SRC}' to '${RKDEV_DEST_DIR}'")
+      endif()
+      return()
+    endif()
+  endif()
+endif()
+
 set(RKDEV_CANDIDATES)
 file(GLOB_RECURSE RKDEV_PRIMARY LIST_DIRECTORIES false
   "${RKDEV_SEARCH_ROOT}/${RKDEV_BINARY_NAME}"
