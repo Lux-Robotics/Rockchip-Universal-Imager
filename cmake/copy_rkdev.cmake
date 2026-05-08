@@ -118,6 +118,17 @@ if(RKDEV_COUNT EQUAL 0)
 endif()
 list(LENGTH RKDEV_CANDIDATES RKDEV_COUNT)
 if(RKDEV_COUNT EQUAL 0)
+  if(DEFINED RKDEV_BASH AND EXISTS "${RKDEV_BASH}")
+    execute_process(
+      COMMAND ${RKDEV_BASH} -lc "export MSYSTEM=${RKDEV_MSYSTEM}; export PATH=${RKDEV_PATH_PREFIX}:$PATH; echo 'Search root:'; echo \"${RKDEV_SEARCH_ROOT_POSIX}\"; echo 'Top-level listing:'; ls -la \"${RKDEV_SEARCH_ROOT_POSIX}\" 2>/dev/null; echo 'rkdeveloptool* matches:'; find \"${RKDEV_SEARCH_ROOT_POSIX}\" -type f -name 'rkdeveloptool*' -print | head -n 20"
+      OUTPUT_VARIABLE RKDEV_DEBUG_OUT
+      RESULT_VARIABLE RKDEV_DEBUG_RESULT
+    )
+    string(STRIP "${RKDEV_DEBUG_OUT}" RKDEV_DEBUG_OUT)
+    if(RKDEV_DEBUG_RESULT EQUAL 0 AND NOT RKDEV_DEBUG_OUT STREQUAL "")
+      message(STATUS "rkdeveloptool debug output:\n${RKDEV_DEBUG_OUT}")
+    endif()
+  endif()
   message(FATAL_ERROR "rkdeveloptool binary '${RKDEV_BINARY_NAME}' not found under '${RKDEV_SEARCH_ROOT}' or its parent")
 endif()
 
