@@ -48,6 +48,11 @@ else()
     set(RKDEV_OUTPUT_BIN ${RKDEV_PREFIX}/bin/${RKDEV_BINARY_NAME})
 endif()
 set(RKDEV_COPY_SCRIPT ${CMAKE_SOURCE_DIR}/cmake/copy_rkdev.cmake)
+set(RKDEV_SEARCH_ROOT ${CMAKE_BINARY_DIR}/rkdeveloptool)
+set(RKDEV_ALT_BINARY_NAME "")
+if(WIN32 AND RKDEV_BINARY_NAME MATCHES "\\.exe$")
+    string(REGEX REPLACE "\\.exe$" "" RKDEV_ALT_BINARY_NAME "${RKDEV_BINARY_NAME}")
+endif()
 
 if(RKDEV_ENABLE)
     include(ExternalProject)
@@ -89,8 +94,9 @@ if(RKDEV_ENABLE)
     if(WIN32)
         add_custom_command(TARGET hardware-helper POST_BUILD
             COMMAND ${CMAKE_COMMAND}
-                    -DRKDEV_SEARCH_ROOT=${RKDEV_SOURCE_DIR}
+                    -DRKDEV_SEARCH_ROOT=${RKDEV_SEARCH_ROOT}
                     -DRKDEV_BINARY_NAME=${RKDEV_BINARY_NAME}
+                    -DRKDEV_ALT_BINARY_NAME=${RKDEV_ALT_BINARY_NAME}
                     -DRKDEV_DEST_DIR=$<TARGET_FILE_DIR:hardware-helper>
                     -P ${RKDEV_COPY_SCRIPT}
         )
