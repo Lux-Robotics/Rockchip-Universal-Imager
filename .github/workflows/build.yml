@@ -20,18 +20,18 @@ jobs:
             name: windows-x64
             arch: x64
             msystem: MINGW64
-            msystem_lower: mingw64
             msys2_libusb: mingw-w64-x86_64-libusb
             msys2_toolchain: mingw-w64-x86_64-toolchain
+            rkdev_enable: true
 
           # Windows ARM64
           - os: windows-latest
             name: windows-arm64
             arch: ARM64
             msystem: CLANGARM64
-            msystem_lower: clangarm64
             msys2_libusb: mingw-w64-clang-aarch64-libusb
             msys2_toolchain: mingw-w64-clang-aarch64-toolchain
+            rkdev_enable: false
 
           # Linux x64
           - os: ubuntu-24.04
@@ -59,29 +59,18 @@ jobs:
 
       # Windows dependencies (MSYS2 for rkdeveloptool)
       - name: Setup MSYS2
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.rkdev_enable
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
           install: >-
             base-devel
-            make
             autoconf
             automake
             libtool
             pkg-config
             ${{ matrix.msys2_libusb }}
             ${{ matrix.msys2_toolchain }}
-
-      - name: MSYS2 Sanity Check
-        if: runner.os == 'Windows'
-        run: |
-          C:/msys64/usr/bin/bash.exe -lc "export MSYSTEM=${{ matrix.msystem }}; export PATH=/${{ matrix.msystem_lower }}/bin:/usr/bin; export PKG_CONFIG_PATH=/${{ matrix.msystem_lower }}/lib/pkgconfig:/${{ matrix.msystem_lower }}/share/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig; export PKG_CONFIG_LIBDIR=/${{ matrix.msystem_lower }}/lib/pkgconfig:/${{ matrix.msystem_lower }}/share/pkgconfig; echo MSYSTEM=$MSYSTEM; which autoreconf; autoreconf --version; which make; make --version; which gcc; gcc --version; which clang; clang --version; pkg-config --version; pkg-config --cflags --libs libusb-1.0; pacman -Q autoconf automake libtool ${{ matrix.msys2_libusb }}; echo PATH=$PATH"
-
-      - name: Ensure MSYS2 autotools
-        if: runner.os == 'Windows'
-        run: |
-          C:/msys64/usr/bin/bash.exe -lc "export MSYSTEM=${{ matrix.msystem }}; export PATH=/${{ matrix.msystem_lower }}/bin:/usr/bin; pacman -S --noconfirm --needed make autoconf automake libtool ${{ matrix.msys2_toolchain }} ${{ matrix.msys2_libusb }}"
 
       # Linux dependencies
       - name: Install Linux Dependencies
@@ -113,7 +102,7 @@ jobs:
       - name: Configure Windows
         if: runner.os == 'Windows'
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} -DRKDEV_REPO=${{ env.RKDEV_REPO }} -DRKDEV_TAG=${{ env.RKDEV_TAG }} -DRKDEV_BASH=C:/msys64/usr/bin/bash.exe -DRKDEV_MSYSTEM=${{ matrix.msystem }} -DRKDEV_DEBUG=ON
+          cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} -DRKDEV_REPO=${{ env.RKDEV_REPO }} -DRKDEV_TAG=${{ env.RKDEV_TAG }} -DRKDEV_BASH=C:/msys64/usr/bin/bash.exe -DRKDEV_MSYSTEM=${{ matrix.msystem }} -DRKDEV_ENABLE=${{ matrix.rkdev_enable }}
 
       # Configure Linux
       - name: Configure Linux

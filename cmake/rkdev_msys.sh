@@ -4,19 +4,27 @@ set -euo pipefail
 SRC_DIR="$1"
 PREFIX="$2"
 BIN_NAME="$3"
-PATCH_WERROR="${4:-ON}"
 
 if [[ -z "$SRC_DIR" || -z "$PREFIX" || -z "$BIN_NAME" ]]; then
-  echo "build_rkdev_msys: missing arguments" >&2
+  echo "rkdev_msys: missing arguments" >&2
   exit 1
 fi
 
 cd "$SRC_DIR"
 
-if [[ "$PATCH_WERROR" == "ON" ]]; then
-  if [[ -f Makefile ]]; then
-    sed -i 's/-Werror//g' Makefile
+if [[ -f "./configure" ]]; then
+  sh ./configure --prefix="$PREFIX"
+else
+  if [[ -x "./autogen.sh" ]]; then
+    ./autogen.sh
+  else
+    autoreconf -i
   fi
+  sh ./configure --prefix="$PREFIX"
+fi
+
+if [[ -f Makefile ]]; then
+  sed -i 's/-Werror//g' Makefile
 fi
 
 make clean || true
