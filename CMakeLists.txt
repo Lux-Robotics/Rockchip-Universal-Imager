@@ -26,3 +26,56 @@ target_sources(hardware-helper PRIVATE
 target_link_libraries(hardware-helper PRIVATE
     webview::core
 )
+
+option(RKDEV_ENABLE "Build rkdeveloptool with ExternalProject" ON)
+set(RKDEV_REPO "https://github.com/lux-robotics/rkdeveloptool.git" CACHE STRING "rkdeveloptool repository URL")
+set(RKDEV_TAG "master" CACHE STRING "rkdeveloptool git tag or branch")
+
+if(WIN32)
+    set(RKDEV_BINARY_NAME "rkdeveloptool.exe" CACHE STRING "rkdeveloptool output binary name")
+    set(RKDEV_BASH "C:/msys64/usr/bin/bash.exe" CACHE FILEPATH "Path to MSYS2 bash.exe for rkdeveloptool build")
+else()
+    set(RKDEV_BINARY_NAME "rkdeveloptool" CACHE STRING "rkdeveloptool output binary name")
+endif()
+
+set(RKDEV_PREFIX ${CMAKE_BINARY_DIR}/rkdeveloptool/install)
+set(RKDEV_BIN ${RKDEV_PREFIX}/bin/${RKDEV_BINARY_NAME})
+
+if(RKDEV_ENABLE)
+    include(ExternalProject)
+
+    if(WIN32)
+        if(NOT EXISTS "${RKDEV_BASH}")
+            message(FATAL_ERROR "RKDEV_BASH not found. Install MSYS2 and set -DRKDEV_BASH=... or disable rkdeveloptool with -DRKDEV_ENABLE=OFF")
+        endif()
+
+        file(TO_CMAKE_PATH "${RKDEV_PREFIX}" RKDEV_PREFIX_POSIX)
+        set(RKDEV_CONFIGURE_CMD ${RKDEV_BASH} -lc "cd \"<SOURCE_DIR>\" && ./autogen.sh && ./configure --prefix=\"${RKDEV_PREFIX_POSIX}\"")
+        set(RKDEV_BUILD_CMD ${RKDEV_BASH} -lc "cd \"<SOURCE_DIR>\" && make")
+        set(RKDEV_INSTALL_CMD ${RKDEV_BASH} -lc "cd \"<SOURCE_DIR>\" && make install")
+    else()
+        set(RKDEV_CONFIGURE_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && ./autogen.sh && ./configure --prefix=\"${RKDEV_PREFIX}\"")
+        set(RKDEV_BUILD_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && make")
+        set(RKDEV_INSTALL_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && make install")
+    endif()
+
+    ExternalProject_Add(rkdeveloptool_ext
+        GIT_REPOSITORY ${RKDEV_REPO}
+        GIT_TAG ${RKDEV_TAG}
+        UPDATE_COMMAND ""
+        SOURCE_DIR ${CMAKE_BINARY_DIR}/rkdeveloptool/src
+        BUILD_IN_SOURCE 1
+        CONFIGURE_COMMAND ${RKDEV_CONFIGURE_CMD}
+        BUILD_COMMAND ${RKDEV_BUILD_CMD}
+        INSTALL_COMMAND ${RKDEV_INSTALL_CMD}
+        BUILD_BYPRODUCTS ${RKDEV_BIN}
+    )
+
+    add_dependencies(hardware-helper rkdeveloptool_ext)
+
+    add_custom_command(TARGET hardware-helper POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${RKDEV_BIN}
+                $<TARGET_FILE_DIR:hardware-helper>
+    )
+endif()
