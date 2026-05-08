@@ -40,3 +40,34 @@ else
   echo "rkdeveloptool binary not found in $SRC_DIR" >&2
   exit 1
 fi
+
+TOOLCHAIN_BIN=""
+if command -v g++ >/dev/null 2>&1; then
+  TOOLCHAIN_BIN=$(dirname "$(command -v g++)")
+elif command -v clang++ >/dev/null 2>&1; then
+  TOOLCHAIN_BIN=$(dirname "$(command -v clang++)")
+elif command -v gcc >/dev/null 2>&1; then
+  TOOLCHAIN_BIN=$(dirname "$(command -v gcc)")
+elif command -v clang >/dev/null 2>&1; then
+  TOOLCHAIN_BIN=$(dirname "$(command -v clang)")
+fi
+
+if [[ -z "$TOOLCHAIN_BIN" ]]; then
+  case "${MSYSTEM:-}" in
+    MINGW64) TOOLCHAIN_BIN="/mingw64/bin" ;;
+    CLANGARM64) TOOLCHAIN_BIN="/clangarm64/bin" ;;
+  esac
+fi
+
+DLLS=(
+  "libstdc++-6.dll"
+  "libgcc_s_seh-1.dll"
+  "libusb-1.0.dll"
+  "libwinpthread-1.dll"
+)
+
+for dll in "${DLLS[@]}"; do
+  if [[ -n "$TOOLCHAIN_BIN" && -f "$TOOLCHAIN_BIN/$dll" ]]; then
+    cp -f "$TOOLCHAIN_BIN/$dll" "$PREFIX/bin/$dll"
+  fi
+done

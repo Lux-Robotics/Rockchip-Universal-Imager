@@ -82,9 +82,17 @@ if(RKDEV_ENABLE)
 
     add_dependencies(hardware-helper rkdeveloptool_ext)
 
-    add_custom_command(TARGET hardware-helper POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${RKDEV_OUTPUT_BIN}
-                $<TARGET_FILE_DIR:hardware-helper>
-    )
+    if(WIN32)
+        add_custom_command(TARGET hardware-helper POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    ${RKDEV_PREFIX}/bin
+                    $<TARGET_FILE_DIR:hardware-helper>
+        )
+    else()
+        add_custom_command(TARGET hardware-helper POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${RKDEV_OUTPUT_BIN}
+                    $<TARGET_FILE_DIR:hardware-helper>
+        )
+    endif()
 endif()
