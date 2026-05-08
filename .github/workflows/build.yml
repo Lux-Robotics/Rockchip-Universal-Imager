@@ -67,6 +67,16 @@ jobs:
             pkg-config
             ${{ matrix.msys2_libusb }}
 
+      - name: MSYS2 Sanity Check
+        if: runner.os == 'Windows'
+        run: |
+          C:/msys64/usr/bin/bash.exe -lc "echo MSYSTEM=$MSYSTEM; which autoreconf; autoreconf --version; pacman -Q autoconf automake libtool; echo PATH=$PATH"
+
+      - name: Ensure MSYS2 autotools
+        if: runner.os == 'Windows'
+        run: |
+          C:/msys64/usr/bin/bash.exe -lc "pacman -S --noconfirm --needed autoconf automake libtool"
+
       # Linux dependencies
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
