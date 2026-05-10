@@ -17,14 +17,28 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(webview)
 
+FetchContent_Declare(
+    reproc
+    GIT_REPOSITORY https://github.com/DaanDeMeyer/reproc.git
+    GIT_TAG v14.2.4
+)
+
+set(REPROC++ ON CACHE BOOL "Build reproc++" FORCE)
+FetchContent_MakeAvailable(reproc)
+
 add_executable(hardware-helper WIN32)
 
 target_sources(hardware-helper PRIVATE
     src/main.cpp
+    src/rkdeveloptool_runner.cpp
+    src/rkdeveloptool_runner.h
+    src/logging.cpp
+    src/logging.h
 )
 
 target_link_libraries(hardware-helper PRIVATE
     webview::core
+    reproc++
 )
 
 option(RKDEV_ENABLE "Build rkdeveloptool with ExternalProject" ON)
