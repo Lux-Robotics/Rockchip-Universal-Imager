@@ -8,6 +8,8 @@
 #include <thread>
 #include <vector>
 
+#include <reproc++/reproc.hpp>
+
 namespace rkdev {
 
 struct ProcessResult {
@@ -48,6 +50,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> cancelled_{false};
     std::thread worker_;
+    reproc::process process_;
 
     mutable std::mutex mutex_;
     ProcessResult result_;

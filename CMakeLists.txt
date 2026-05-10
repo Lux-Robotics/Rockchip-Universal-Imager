@@ -34,6 +34,7 @@ target_sources(hardware-helper PRIVATE
     src/rkdeveloptool_runner.h
     src/logging.cpp
     src/logging.h
+    src/webview_bindings.cpp
 )
 
 target_link_libraries(hardware-helper PRIVATE

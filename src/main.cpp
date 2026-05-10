@@ -1,6 +1,7 @@
 #include "webview/webview.h"
 #include "rkdeveloptool_runner.h"
 #include "logging.h"
+#include "webview_bindings.h"
 
 #include <atomic>
 #include <chrono>
@@ -77,27 +78,9 @@ void start_device_polling(webview::webview& w) {
                 const std::string status = connected ? "connected" : "disconnected";
                 const std::string info = output;
 
-                auto js_escape = [](const std::string& input) {
-                    std::string out;
-                    out.reserve(input.size() + 2);
-                    out.push_back('"');
-                    for (char ch : input) {
-                        switch (ch) {
-                        case '\\': out += "\\\\"; break;
-                        case '"': out += "\\\""; break;
-                        case '\n': out += "\\n"; break;
-                        case '\r': out += "\\r"; break;
-                        case '\t': out += "\\t"; break;
-                        default: out.push_back(ch); break;
-                        }
-                    }
-                    out.push_back('"');
-                    return out;
-                };
-
-                w.dispatch([&w, status, info, js_escape]() {
+                w.dispatch([&w, status, info]() {
                     w.eval("window.updateDeviceStatus && window.updateDeviceStatus('" + status + "')");
-                    w.eval("window.updateDeviceInfo && window.updateDeviceInfo(" + js_escape(info) + ")");
+                    w.eval("window.updateDeviceInfo && window.updateDeviceInfo(" + bindings::js_string_literal(info) + ")");
                 });
             }
 
@@ -122,14 +105,14 @@ int main()
     try {
         webview::webview w(false, nullptr);
 
-        w.bind("setPollingEnabled", [](bool enabled) {
-            set_device_polling_enabled(enabled);
-            return true;
+        w.bind("setPollingEnabled", [](const std::string& req) {
+            set_device_polling_enabled(bindings::parse_bool_arg(req, true));
+            return std::string("true");
         });
 
-        w.bind("logWrite", [](const std::string& message) {
-            logging::write(message);
-            return true;
+        w.bind("logWrite", [](const std::string& req) {
+            logging::write(bindings::parse_string_arg(req));
+            return std::string("true");
         });
 
         w.set_title("Hardware Helper");

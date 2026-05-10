@@ -141,7 +141,7 @@ void RkdevTask::run() {
         };
 
         const auto drain_ec = reproc::drain(process_, sink, sink);
-        if (drain_ec && drain_ec != reproc::error::broken_pipe) {
+        if (drain_ec && drain_ec != std::make_error_code(std::errc::broken_pipe)) {
             throw std::runtime_error("rkdeveloptool output read failed: " + drain_ec.message());
         }
 
