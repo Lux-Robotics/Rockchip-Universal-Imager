@@ -103,6 +103,11 @@ int main()
 
 {
     try {
+#ifdef _WIN32
+        SetEnvironmentVariableW(
+            L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            L"--disable-gpu --disable-gpu-compositing");
+#endif
         webview::webview w(false, nullptr);
 
         w.bind("setPollingEnabled", [](const std::string& req) {
