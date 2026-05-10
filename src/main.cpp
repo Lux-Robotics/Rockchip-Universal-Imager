@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -104,9 +105,25 @@ int main()
 {
     try {
 #ifdef _WIN32
+        wchar_t appdata_path[MAX_PATH];
+        const DWORD appdata_len = GetEnvironmentVariableW(
+            L"LOCALAPPDATA",
+            appdata_path,
+            static_cast<DWORD>(std::size(appdata_path)));
+        if (appdata_len > 0 && appdata_len < std::size(appdata_path)) {
+            std::wstring user_data_dir = appdata_path;
+            user_data_dir += L"\\HardwareHelper\\WebView2";
+            SetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", user_data_dir.c_str());
+        }
+
         SetEnvironmentVariableW(
             L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            L"--disable-gpu --disable-gpu-compositing");
+            L"--disable-gpu --disable-gpu-compositing --disable-extensions --disable-features=BackForwardCache --no-first-run --disable-background-networking --disable-component-update");
+    #elif defined(__APPLE__)
+        setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
+    #elif defined(__linux__)
+        setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
+        setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 1);
 #endif
         webview::webview w(false, nullptr);
 
