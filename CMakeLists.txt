@@ -79,15 +79,23 @@ if(WIN32)
             set(LIBWDI_OPT_M64 1)
             set(LIBWDI_OPT_M32 0)
             set(LIBWDI_INSTALLER_NAME installer_x64)
+            set(LIBWDI_BUILD64 1)
         else()
             set(LIBWDI_OPT_M64 0)
             set(LIBWDI_OPT_M32 1)
             set(LIBWDI_INSTALLER_NAME installer_x86)
+            set(LIBWDI_BUILD64 0)
         endif()
 
         configure_file(
             ${CMAKE_SOURCE_DIR}/cmake/libwdi_config.h.in
             ${LIBWDI_GENERATED_DIR}/config.h
+            @ONLY
+        )
+
+        configure_file(
+            ${CMAKE_SOURCE_DIR}/cmake/libwdi_build64.h.in
+            ${LIBWDI_GENERATED_DIR}/build64.h
             @ONLY
         )
 
