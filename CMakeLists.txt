@@ -67,7 +67,7 @@ if(WIN32)
         set(LIBWDI_PATH_PREFIX "/${LIBWDI_MSYSTEM_LOWER}/bin:/usr/bin")
         set(LIBWDI_PREFIX ${CMAKE_BINARY_DIR}/libwdi/install)
         set(LIBWDI_SOURCE_DIR ${CMAKE_BINARY_DIR}/libwdi/src)
-        set(LIBWDI_CONFIGURE_CMD ${LIBWDI_BASH} -lc "export MSYSTEM=${LIBWDI_MSYSTEM} && export PATH=${LIBWDI_PATH_PREFIX}:$PATH && export CONFIG_SITE=/dev/null && export WDK_DIR= && SRC_DIR=\$(cygpath -u '<SOURCE_DIR>') && PREFIX=\$(cygpath -u '${LIBWDI_PREFIX}') && LIBUSB0_DIR=\$(cygpath -u '${LIBWDI_LIBUSB0_DIR}') && cd \"$SRC_DIR\" && ./autogen.sh && ./configure --prefix=\"$PREFIX\" --with-wdkdir= --with-libusb0=\"$LIBUSB0_DIR\" --enable-static=yes --enable-shared=no --disable-32bit --enable-64bit")
+        set(LIBWDI_CONFIGURE_CMD ${LIBWDI_BASH} -lc "export MSYSTEM=${LIBWDI_MSYSTEM} && export PATH=${LIBWDI_PATH_PREFIX}:$PATH && SITE=/tmp/libwdi_site && printf 'WDK_DIR=\nwith_wdkdir=\n' > $SITE && export CONFIG_SITE=$SITE && export WDK_DIR= && SRC_DIR=\$(cygpath -u '<SOURCE_DIR>') && PREFIX=\$(cygpath -u '${LIBWDI_PREFIX}') && LIBUSB0_DIR=\$(cygpath -u '${LIBWDI_LIBUSB0_DIR}') && cd \"$SRC_DIR\" && ./autogen.sh && ./configure --prefix=\"$PREFIX\" --with-wdkdir= --with-libusb0=\"$LIBUSB0_DIR\" --enable-static=yes --enable-shared=no --disable-32bit --enable-64bit")
         set(LIBWDI_BUILD_CMD ${LIBWDI_BASH} -lc "export MSYSTEM=${LIBWDI_MSYSTEM} && export PATH=${LIBWDI_PATH_PREFIX}:$PATH && SRC_DIR=\$(cygpath -u '<SOURCE_DIR>') && cd \"$SRC_DIR\" && make")
         set(LIBWDI_INSTALL_CMD ${LIBWDI_BASH} -lc "export MSYSTEM=${LIBWDI_MSYSTEM} && export PATH=${LIBWDI_PATH_PREFIX}:$PATH && SRC_DIR=\$(cygpath -u '<SOURCE_DIR>') && cd \"$SRC_DIR\" && make install")
 
