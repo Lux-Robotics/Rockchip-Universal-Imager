@@ -156,6 +156,8 @@ if(WIN32)
         target_include_directories(libwdi PUBLIC
             ${LIBWDI_GENERATED_DIR}
             ${LIBWDI_SRC_DIR}
+        )
+        target_include_directories(libwdi PRIVATE
             ${libwdi_SOURCE_DIR}/msvc
         )
         target_link_libraries(libwdi PUBLIC setupapi ole32 ntdll)
