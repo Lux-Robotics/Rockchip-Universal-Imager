@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SRC_DIR="$(cygpath -u "$1")"
+PREFIX="$(cygpath -u "$2")"
+LIBUSB0_DIR="$(cygpath -u "$3")"
+MSYSTEM_NAME="$4"
+
+export MSYSTEM="$MSYSTEM_NAME"
+case "$MSYSTEM_NAME" in
+  MINGW64) ROOT=/mingw64 ;;
+  CLANGARM64) ROOT=/clangarm64 ;;
+  *) ROOT=/mingw64 ;;
+ esac
+export PATH="$ROOT/bin:/usr/bin"
+
+export CONFIG_SITE=/dev/null
+export WDK_DIR=
+export with_wdkdir=
+
+cd "$SRC_DIR"
+./autogen.sh
+./configure --prefix="$PREFIX" --with-wdkdir= --with-libusb0="$LIBUSB0_DIR" --enable-static=yes --enable-shared=no --disable-32bit --enable-64bit
