@@ -92,6 +92,10 @@ jobs:
           $root = $dll.Directory.Parent.Parent.FullName
           $x86Sys = Join-Path $root "bin\x86\libusb0.sys"
           $x86Dll = Join-Path $root "bin\x86\libusb0_x86.dll"
+          $x86Alt = Join-Path $root "bin\x86\libusb0.dll"
+          if (-not (Test-Path $x86Dll) -and (Test-Path $x86Alt)) {
+            Copy-Item -Force $x86Alt $x86Dll
+          }
           $x64Sys = Join-Path $root "bin\amd64\libusb0.sys"
           $x64Dll = Join-Path $root "bin\amd64\libusb0.dll"
           if (-not (Test-Path $x86Sys) -or -not (Test-Path $x86Dll) -or -not (Test-Path $x64Sys) -or -not (Test-Path $x64Dll)) {
