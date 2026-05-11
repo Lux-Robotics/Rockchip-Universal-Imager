@@ -15,11 +15,13 @@ case "$MSYSTEM_NAME" in
 export PATH="$ROOT/bin:/usr/bin"
 
 SITE="/tmp/libwdi_site"
-printf "WDK_DIR=\nwith_wdkdir=\nenable_32bit=no\nenable_64bit=yes\n" > "$SITE"
+printf "WDK_DIR=\nwith_wdkdir=\nLIBUSBK_DIR=\nwith_libusbk=\nenable_32bit=no\nenable_64bit=yes\n" > "$SITE"
 export CONFIG_SITE="$SITE"
 export WDK_DIR=
 export with_wdkdir=
+export LIBUSBK_DIR=
+export with_libusbk=
 
 cd "$SRC_DIR"
 ./autogen.sh
-./configure --prefix="$PREFIX" --with-wdkdir= --with-libusb0="$LIBUSB0_DIR" --enable-static=yes --enable-shared=no --disable-32bit --enable-64bit
+./configure --prefix="$PREFIX" --with-wdkdir= --with-libusbk= --with-libusb0="$LIBUSB0_DIR" --enable-static=yes --enable-shared=no --disable-32bit --enable-64bit
