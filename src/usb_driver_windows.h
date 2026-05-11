@@ -17,6 +17,11 @@ struct InstallResult {
 };
 
 DriverInfo query_driver();
-InstallResult install_libusb_win32();
+struct InstallOptions {
+    std::string device_name;
+    bool allow_elevation = true;
+};
+
+InstallResult install_libusb_win32(const InstallOptions& options);
 
 } // namespace usb_driver

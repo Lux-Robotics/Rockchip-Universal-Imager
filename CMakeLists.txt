@@ -35,6 +35,8 @@ target_sources(hardware-helper PRIVATE
     src/logging.cpp
     src/logging.h
     src/webview_bindings.cpp
+    src/windows_cmdline.cpp
+    src/windows_cmdline.h
     src/usb_driver_windows.cpp
     src/usb_driver_windows.h
 )
@@ -45,6 +47,7 @@ target_link_libraries(hardware-helper PRIVATE
 )
 
 if(WIN32)
+    target_link_libraries(hardware-helper PRIVATE shell32)
     option(LIBWDI_ENABLE "Build libwdi with native MSVC sources" ON)
     set(LIBWDI_REPO "https://github.com/pbatard/libwdi.git" CACHE STRING "libwdi repository URL")
     set(LIBWDI_TAG "v1.5.0" CACHE STRING "libwdi git tag or branch")

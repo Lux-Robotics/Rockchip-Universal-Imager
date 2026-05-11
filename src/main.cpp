@@ -3,6 +3,7 @@
 #include "logging.h"
 #include "usb_driver_windows.h"
 #include "webview_bindings.h"
+#include "windows_cmdline.h"
 
 #include <atomic>
 #include <chrono>
@@ -106,6 +107,23 @@ int main()
 {
     try {
 #ifdef _WIN32
+        const auto args = win_cli::get_command_line_args();
+        if (win_cli::has_flag(args, L"--install-driver")) {
+            usb_driver::InstallOptions options;
+            options.allow_elevation = false;
+            const auto device_name = win_cli::get_flag_value(args, L"--device-name");
+            if (!device_name.empty()) {
+                options.device_name = win_cli::wide_to_utf8(device_name);
+            }
+            const auto result = usb_driver::install_libusb_win32(options);
+            if (!result.success) {
+                logging::write("driver", "Elevated driver install failed: " + result.error_message);
+                return 1;
+            }
+            return 0;
+        }
+#endif
+#ifdef _WIN32
         wchar_t appdata_path[MAX_PATH];
         const DWORD appdata_len = GetEnvironmentVariableW(
             L"LOCALAPPDATA",
@@ -148,8 +166,10 @@ int main()
                 "}";
         });
 
-        w.bind("installUsbDriver", [](const std::string&) {
-            const auto result = usb_driver::install_libusb_win32();
+        w.bind("installUsbDriver", [](const std::string& req) {
+            usb_driver::InstallOptions options;
+            options.device_name = bindings::parse_string_arg(req);
+            const auto result = usb_driver::install_libusb_win32(options);
             return std::string("{") +
                 "\"success\":" + (result.success ? "true" : "false") + "," +
                 "\"error\":" + bindings::js_string_literal(result.error_message) +
@@ -195,6 +215,7 @@ int main()
                     let pollingEnabled = true;
                     let lastInfo = "";
                     let lastStatus = "disconnected";
+                    const driverDeviceName = "Rockchip Bootloader Device";
 
                     const statusDot = document.getElementById("statusDot");
                     const statusText = document.getElementById("statusText");
@@ -267,7 +288,7 @@ int main()
                             return;
                         }
                         driverStatus.textContent = "Installing driver...";
-                        const raw = await window.installUsbDriver();
+                        const raw = await window.installUsbDriver(driverDeviceName);
                         const result = JSON.parse(raw);
                         if (!result.success) {
                             driverStatus.textContent = result.error || "driver install failed";
