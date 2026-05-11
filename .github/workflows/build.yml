@@ -89,7 +89,15 @@ jobs:
           Expand-Archive -Force -Path $zip -DestinationPath $dir
           $dll = Get-ChildItem -Path $dir -Recurse -Filter libusb0.dll | Select-Object -First 1
           if (-not $dll) { throw "libusb0.dll not found in extracted archive" }
-          $driverDir = $dll.Directory.FullName
+          $root = $dll.Directory.Parent.Parent.FullName
+          $x86Sys = Join-Path $root "bin\x86\libusb0.sys"
+          $x86Dll = Join-Path $root "bin\x86\libusb0_x86.dll"
+          $x64Sys = Join-Path $root "bin\amd64\libusb0.sys"
+          $x64Dll = Join-Path $root "bin\amd64\libusb0.dll"
+          if (-not (Test-Path $x86Sys) -or -not (Test-Path $x86Dll) -or -not (Test-Path $x64Sys) -or -not (Test-Path $x64Dll)) {
+            throw "libusb-win32 driver files not found under $root"
+          }
+          $driverDir = $root
           "LIBWDI_LIBUSB0_DIR=$driverDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # Linux dependencies
