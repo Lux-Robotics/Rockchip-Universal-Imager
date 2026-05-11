@@ -14,7 +14,9 @@ case "$MSYSTEM_NAME" in
  esac
 export PATH="$ROOT/bin:/usr/bin"
 
-export CONFIG_SITE=/dev/null
+SITE="/tmp/libwdi_site"
+printf "WDK_DIR=\nwith_wdkdir=\n" > "$SITE"
+export CONFIG_SITE="$SITE"
 export WDK_DIR=
 export with_wdkdir=
 
