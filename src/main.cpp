@@ -202,7 +202,7 @@ int main()
         w.set_title("Hardware Helper");
         w.set_size(800, 600, WEBVIEW_HINT_NONE);
 
-        w.set_html(R"(
+        w.set_html(R"HTML(
             <!doctype html>
             <html>
             <body style="
@@ -347,7 +347,7 @@ int main()
                 </script>
             </body>
             </html>
-        )");
+        )HTML");
 
         start_device_polling(w);
 
