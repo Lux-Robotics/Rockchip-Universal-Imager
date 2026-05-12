@@ -1,9 +1,8 @@
 #include "webview/webview.h"
 #include "rkdeveloptool_runner.h"
 #include "logging.h"
-#include "usb_driver_windows.h"
+#include "libusb-win32-helper.h"
 #include "webview_bindings.h"
-#include "windows_driver.h"
 
 #include <atomic>
 #include <chrono>
