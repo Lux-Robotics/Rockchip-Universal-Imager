@@ -1,5 +1,5 @@
-#include "libusb-win32-helper.h"
-#include "logging.h"
+#include "core/libusb-win32-helper.h"
+#include "core/logging.h"
 
 #include <cstdlib>
 #include <cstring>

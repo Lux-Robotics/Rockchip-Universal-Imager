@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hardware Helper</title>
+    <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+    <div style="max-width:640px; width:100%; padding:24px;">
+        <h1 style="margin:0 0 16px 0;">Hardware Helper</h1>
+
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <div id="statusDot" style="width:12px; height:12px; border-radius:50%; background:#a33;"></div>
+            <div id="statusText">disconnected</div>
+            <div id="infoIcon" title="" style="margin-left:auto; width:20px; height:20px; border-radius:50%; border:1px solid #777; display:flex; align-items:center; justify-content:center; font-size:12px; color:#bbb;">i</div>
+        </div>
+
+        <div id="deviceInfo" style="color:#bbb; white-space:pre-wrap; min-height:24px;">check usb</div>
+        <div id="driverStatus" style="color:#bbb; margin-top:8px; min-height:20px;"></div>
+        <div id="flashStatus" style="color:#bbb; margin-top:8px; min-height:20px;"></div>
+
+        <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
+            <button id="pollingToggle">Pause Polling</button>
+            <button id="testLog">Test Log</button>
+            <button id="toggleLog">Show Log</button>
+            <button id="installDriver">Install libusb-win32</button>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
+            <button id="selectImage">Select .img</button>
+            <button id="flashBootloader">Flash Bootloader</button>
+            <button id="flashImage">Flash Image</button>
+        </div>
+
+        <div id="selectedImage" style="color:#888; margin-top:8px; word-break:break-all;">No image selected</div>
+        <div style="margin-top:8px;">
+            <progress id="flashProgress" max="100" value="0" style="width:100%;"></progress>
+        </div>
+
+        <div id="logPanel" style="display:none; margin-top:16px;">
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <button id="copyLog">Copy Log</button>
+                <button id="clearLog">Clear Log</button>
+            </div>
+            <textarea id="liveLog" readonly style="width:100%; height:160px; background:#0b0b0b; color:#9bd; border:1px solid #333; padding:8px;"></textarea>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

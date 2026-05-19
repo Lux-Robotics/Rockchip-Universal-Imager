@@ -39,21 +39,31 @@ add_executable(hardware-helper WIN32)
 
 target_sources(hardware-helper PRIVATE
     src/main.cpp
-    src/rkdeveloptool_runner.cpp
-    src/rkdeveloptool_runner.h
-    src/logging.cpp
-    src/logging.h
-    src/webview_bindings.cpp
-    src/libusb-win32-helper.cpp
-    src/libusb-win32-helper.h
-    src/file_dialog.cpp
-    src/file_dialog.h
-    src/loader_map.h
+    src/core/rkdeveloptool_runner.cpp
+    src/core/rkdeveloptool_runner.h
+    src/core/logging.cpp
+    src/core/logging.h
+    src/core/webview_bindings.cpp
+    src/core/libusb-win32-helper.cpp
+    src/core/libusb-win32-helper.h
+    src/core/file_dialog.cpp
+    src/core/file_dialog.h
+    src/core/loader_map.h
 )
 
 target_link_libraries(hardware-helper PRIVATE
     webview::core
     reproc++
+)
+
+target_include_directories(hardware-helper PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+add_custom_command(TARGET hardware-helper POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/src/ui
+            $<TARGET_FILE_DIR:hardware-helper>/ui
 )
 
 if(TARGET hardware-helper)

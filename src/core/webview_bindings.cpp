@@ -1,4 +1,4 @@
-#include "webview_bindings.h"
+#include "core/webview_bindings.h"
 
 #include <cctype>
 
