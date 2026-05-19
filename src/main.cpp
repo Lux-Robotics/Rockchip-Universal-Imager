@@ -146,7 +146,7 @@ void update_flash_progress(webview::webview& w, int percent) {
     if (!g_webview_alive.load()) {
         return;
     }
-    const int clamped = std::max(0, std::min(100, percent));
+    const int clamped = std::clamp(percent, 0, 100);
     w.dispatch([&w, clamped]() {
         w.eval("window.updateFlashProgress && window.updateFlashProgress(" + std::to_string(clamped) + ")");
     });
