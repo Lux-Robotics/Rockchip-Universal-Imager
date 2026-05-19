@@ -1,0 +1,9 @@
+#pragma once
+
+namespace ui {
+
+static const char* kIndexHtml = R"UI_HTML(@UI_INDEX_HTML@)UI_HTML";
+static const char* kAppCss = R"UI_CSS(@UI_APP_CSS@)UI_CSS";
+static const char* kAppJs = R"UI_JS(@UI_APP_JS@)UI_JS";
+
+} // namespace ui

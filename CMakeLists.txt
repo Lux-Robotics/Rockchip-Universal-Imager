@@ -56,14 +56,29 @@ target_link_libraries(hardware-helper PRIVATE
     reproc++
 )
 
-target_include_directories(hardware-helper PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
+file(READ ${CMAKE_SOURCE_DIR}/src/ui/index.html UI_INDEX_HTML)
+file(READ ${CMAKE_SOURCE_DIR}/src/ui/app.css UI_APP_CSS)
+file(READ ${CMAKE_SOURCE_DIR}/src/ui/app.js UI_APP_JS)
+set(UI_INDEX_HTML "${UI_INDEX_HTML}")
+set(UI_APP_CSS "${UI_APP_CSS}")
+set(UI_APP_JS "${UI_APP_JS}")
+
+configure_file(
+    ${CMAKE_SOURCE_DIR}/cmake/ui_embed.h.in
+    ${CMAKE_BINARY_DIR}/generated/ui_embed.h
+    @ONLY
 )
 
-add_custom_command(TARGET hardware-helper POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/src/ui
-            $<TARGET_FILE_DIR:hardware-helper>/ui
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${CMAKE_SOURCE_DIR}/src/ui/index.html
+    ${CMAKE_SOURCE_DIR}/src/ui/app.css
+    ${CMAKE_SOURCE_DIR}/src/ui/app.js
+    ${CMAKE_SOURCE_DIR}/cmake/ui_embed.h.in
+)
+
+target_include_directories(hardware-helper PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/generated
 )
 
 if(TARGET hardware-helper)

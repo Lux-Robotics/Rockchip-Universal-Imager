@@ -5,6 +5,7 @@
 #include "core/webview_bindings.h"
 #include "core/file_dialog.h"
 #include "core/loader_map.h"
+#include "ui_embed.h"
 
 #include <atomic>
 #include <algorithm>
@@ -13,14 +14,11 @@
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <climits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <regex>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -34,11 +32,6 @@
 
 #endif
 
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -54,45 +47,22 @@ std::atomic<unsigned int> g_last_detected_pid{0};
 std::shared_ptr<rkdev::RkdevTask> g_flash_task;
 std::mutex g_flash_mutex;
 
-std::filesystem::path executable_dir() {
-#if defined(_WIN32)
-    std::wstring buffer;
-    buffer.resize(MAX_PATH);
-    DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (size == 0) {
-        return std::filesystem::current_path();
+void replace_all(std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) {
+        return;
     }
-    buffer.resize(size);
-    return std::filesystem::path(buffer).parent_path();
-#elif defined(__APPLE__)
-    uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::string buffer(size, '\0');
-    if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
-        return std::filesystem::current_path();
+    size_t start = 0;
+    while ((start = text.find(from, start)) != std::string::npos) {
+        text.replace(start, from.size(), to);
+        start += to.size();
     }
-    return std::filesystem::weakly_canonical(std::filesystem::path(buffer)).parent_path();
-#elif defined(__linux__)
-    char buffer[PATH_MAX];
-    const ssize_t length = readlink("/proc/self/exe", buffer, sizeof(buffer));
-    if (length <= 0) {
-        return std::filesystem::current_path();
-    }
-    return std::filesystem::path(std::string(buffer, static_cast<size_t>(length))).parent_path();
-#else
-    return std::filesystem::current_path();
-#endif
 }
 
-std::string load_ui_html() {
-    const auto path = executable_dir() / "ui" / "index.html";
-    std::ifstream in(path, std::ios::in | std::ios::binary);
-    if (!in) {
-        return std::string();
-    }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
+std::string build_ui_html() {
+    std::string html = ui::kIndexHtml ? ui::kIndexHtml : "";
+    replace_all(html, "{{INLINE_CSS}}", ui::kAppCss ? ui::kAppCss : "");
+    replace_all(html, "{{INLINE_JS}}", ui::kAppJs ? ui::kAppJs : "");
+    return html;
 }
 
 void set_device_polling_enabled(bool enabled) {
@@ -490,9 +460,9 @@ int main()
         w.set_title("Hardware Helper");
         w.set_size(800, 600, WEBVIEW_HINT_NONE);
 
-        const std::string ui_html = load_ui_html();
+        const std::string ui_html = build_ui_html();
         if (ui_html.empty()) {
-            w.set_html("<html><body style=\"background:#111;color:#bbb;font-family:sans-serif;\">Missing ui/index.html</body></html>");
+            w.set_html("<html><body style=\"background:#111;color:#bbb;font-family:sans-serif;\">Missing embedded UI</body></html>");
         } else {
             w.set_html(ui_html);
         }
