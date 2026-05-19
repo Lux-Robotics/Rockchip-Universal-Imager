@@ -37,6 +37,9 @@ target_sources(hardware-helper PRIVATE
     src/webview_bindings.cpp
     src/libusb-win32-helper.cpp
     src/libusb-win32-helper.h
+    src/file_dialog.cpp
+    src/file_dialog.h
+    src/loader_map.h
 )
 
 target_link_libraries(hardware-helper PRIVATE
