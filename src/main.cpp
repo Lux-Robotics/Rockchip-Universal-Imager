@@ -60,8 +60,20 @@ void replace_all(std::string& text, const std::string& from, const std::string& 
 
 std::string build_ui_html() {
     std::string html = ui::kIndexHtml ? ui::kIndexHtml : "";
-    replace_all(html, "{{INLINE_CSS}}", ui::kAppCss ? ui::kAppCss : "");
-    replace_all(html, "{{INLINE_JS}}", ui::kAppJs ? ui::kAppJs : "");
+    const std::string css = ui::kAppCss ? ui::kAppCss : "";
+    const std::string js = ui::kAppJs ? ui::kAppJs : "";
+    replace_all(html, "{{INLINE_CSS}}", css);
+    replace_all(html, "{{INLINE_JS}}", js);
+    if (!css.empty()) {
+        replace_all(html, "<link rel=\"stylesheet\" href=\"app.css\" />", "<style>" + css + "</style>");
+        replace_all(html, "<link rel=\"stylesheet\" href=\"app.css\">", "<style>" + css + "</style>");
+        replace_all(html, "<link rel='stylesheet' href='app.css' />", "<style>" + css + "</style>");
+        replace_all(html, "<link rel='stylesheet' href='app.css'>", "<style>" + css + "</style>");
+    }
+    if (!js.empty()) {
+        replace_all(html, "<script src=\"app.js\"></script>", "<script>" + js + "</script>");
+        replace_all(html, "<script src='app.js'></script>", "<script>" + js + "</script>");
+    }
     return html;
 }
 

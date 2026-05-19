@@ -49,7 +49,9 @@ function render() {
 
 function setDriverInstallRunning(running) {
     driverInstallRunning = running;
-    installDriver.disabled = running;
+    if (installDriver) {
+        installDriver.disabled = running;
+    }
     if (running) {
         driverStatus.textContent = "Installing driver... (this may take a while)";
     }
@@ -195,22 +197,24 @@ flashImage.addEventListener("click", async () => {
     }
 });
 
-installDriver.addEventListener("click", async () => {
+if (installDriver) {
     if (!window.installUsbDriver) {
-        driverStatus.textContent = "driver install unavailable";
-        return;
+        installDriver.style.display = "none";
+    } else {
+        installDriver.addEventListener("click", async () => {
+            if (driverInstallRunning) {
+                return;
+            }
+            setDriverInstallRunning(true);
+            const raw = await window.installUsbDriver(driverDeviceName);
+            const result = JSON.parse(raw);
+            if (!result.started) {
+                setDriverInstallRunning(false);
+                driverStatus.textContent = result.error || "driver install already in progress";
+            }
+        });
     }
-    if (driverInstallRunning) {
-        return;
-    }
-    setDriverInstallRunning(true);
-    const raw = await window.installUsbDriver(driverDeviceName);
-    const result = JSON.parse(raw);
-    if (!result.started) {
-        setDriverInstallRunning(false);
-        driverStatus.textContent = result.error || "driver install already in progress";
-    }
-});
+}
 
 window.onDriverInstallComplete = (result) => {
     setDriverInstallRunning(false);
