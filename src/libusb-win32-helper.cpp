@@ -8,6 +8,9 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #endif
@@ -356,7 +359,7 @@ std::string wide_to_utf8(const std::wstring& input) {
     }
     int size = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (size <= 0) {
-        return std::string(input.begin(), input.end());
+        return std::string();
     }
     std::string out(static_cast<size_t>(size), '\0');
     WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, out.data(), size, nullptr, nullptr);
