@@ -26,6 +26,13 @@ FetchContent_Declare(
 set(REPROC++ ON CACHE BOOL "Build reproc++" FORCE)
 FetchContent_MakeAvailable(reproc)
 
+if(TARGET reproc++)
+    target_compile_options(reproc++ PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=changes-meaning>
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-changes-meaning>
+    )
+endif()
+
 add_executable(hardware-helper WIN32)
 
 target_sources(hardware-helper PRIVATE

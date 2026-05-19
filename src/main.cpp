@@ -310,6 +310,14 @@ int main()
             return std::string("true");
         });
 
+        w.bind("getLogContents", [](const std::string&) {
+            const std::string text = logging::read_all();
+            return std::string("{") +
+                "\"ok\":true," +
+                "\"text\":" + bindings::js_string_literal(text) +
+                "}";
+        });
+
         w.bind("getUsbDriverInfo", [](const std::string&) {
             const auto info = usb_driver::query_driver();
             return std::string("{") +
@@ -576,6 +584,17 @@ int main()
                         logVisible = !logVisible;
                         logPanel.style.display = logVisible ? "block" : "none";
                         toggleLog.textContent = logVisible ? "Hide Log" : "Show Log";
+                        if (logVisible && window.getLogContents) {
+                            window.getLogContents().then(raw => {
+                                try {
+                                    const result = JSON.parse(raw);
+                                    liveLog.value = (result && result.text) ? result.text : "";
+                                    liveLog.scrollTop = liveLog.scrollHeight;
+                                } catch (e) {
+                                    liveLog.value = "";
+                                }
+                            });
+                        }
                     });
 
                     copyLog.addEventListener("click", async () => {
@@ -594,7 +613,9 @@ int main()
                     });
 
                     document.getElementById("testLog").addEventListener("click", async () => {
-                        await window.logWrite("[hardware-helper] Test log message");
+                        const message = "[hardware-helper] Test log message";
+                        await window.logWrite(message);
+                        window.appendLiveLog(message);
                     });
 
                     selectImage.addEventListener("click", async () => {

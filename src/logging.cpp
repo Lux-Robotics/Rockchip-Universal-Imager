@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <sstream>
 #include <string>
 
 namespace logging {
@@ -50,6 +51,21 @@ void write(const std::string& message) {
 void write(const std::string& category, const std::string& message) {
     std::lock_guard<std::mutex> lock(g_mutex);
     append_line("[" + category + "] " + message);
+}
+
+std::string read_all() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto path = log_path();
+    if (!std::filesystem::exists(path)) {
+        return std::string();
+    }
+    std::ifstream in(path, std::ios::in);
+    if (!in) {
+        return std::string();
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
 }
 
 } // namespace logging

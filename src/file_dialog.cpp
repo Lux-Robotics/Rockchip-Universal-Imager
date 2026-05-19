@@ -62,12 +62,17 @@ std::optional<std::string> pick_img_file(std::string& error_message) {
     }
 
     std::string output;
-    const auto drain_ec = reproc::drain(process, [&](reproc::stream, const uint8_t* data, size_t size) -> std::error_code {
-        if (size > 0) {
-            output.append(reinterpret_cast<const char*>(data), size);
-        }
-        return {};
-    });
+    const auto drain_ec = reproc::drain(
+        process,
+        [&](reproc::stream, const uint8_t* data, size_t size) -> std::error_code {
+            if (size > 0) {
+                output.append(reinterpret_cast<const char*>(data), size);
+            }
+            return {};
+        },
+        [&](reproc::stream, const uint8_t*, size_t) -> std::error_code {
+            return {};
+        });
 
     auto [status, wait_ec] = process.wait(reproc::infinite);
     if (drain_ec || wait_ec || status != 0) {
@@ -115,12 +120,17 @@ std::optional<std::string> pick_img_file(std::string& error_message) {
     }
 
     std::string output;
-    const auto drain_ec = reproc::drain(process, [&](reproc::stream, const uint8_t* data, size_t size) -> std::error_code {
-        if (size > 0) {
-            output.append(reinterpret_cast<const char*>(data), size);
-        }
-        return {};
-    });
+    const auto drain_ec = reproc::drain(
+        process,
+        [&](reproc::stream, const uint8_t* data, size_t size) -> std::error_code {
+            if (size > 0) {
+                output.append(reinterpret_cast<const char*>(data), size);
+            }
+            return {};
+        },
+        [&](reproc::stream, const uint8_t*, size_t) -> std::error_code {
+            return {};
+        });
 
     auto [status, wait_ec] = process.wait(reproc::infinite);
     if (drain_ec || wait_ec || status != 0) {
