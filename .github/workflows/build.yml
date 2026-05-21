@@ -10,6 +10,8 @@ env:
   # Artifactory configuration
   ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
   ARTIFACTORY_REPO: ${{ secrets.ARTIFACTORY_REPO }}
+  ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
+  ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
 
 jobs:
   build:
@@ -162,6 +164,7 @@ jobs:
       # Upload to Artifactory
       - name: Upload to Artifactory
         shell: bash
+        if: ${{ env.ARTIFACTORY_URL != '' && env.ARTIFACTORY_REPO != '' && env.ARTIFACTORY_USER != '' && env.ARTIFACTORY_TOKEN != '' }}
         run: |
           set -euo pipefail
           # Build the remote path in Artifactory.
@@ -171,3 +174,9 @@ jobs:
             -T "upload_pkg/${{ matrix.name }}.tar.gz" \
             "$DEST_PATH"
           echo "Upload complete"
+
+      - name: Artifactory Upload Skipped
+        if: ${{ env.ARTIFACTORY_URL == '' || env.ARTIFACTORY_REPO == '' || env.ARTIFACTORY_USER == '' || env.ARTIFACTORY_TOKEN == '' }}
+        shell: bash
+        run: |
+          echo "Skipping Artifactory upload: missing ARTIFACTORY_URL/ARTIFACTORY_REPO/ARTIFACTORY_USER/ARTIFACTORY_TOKEN"
