@@ -92,7 +92,7 @@ jobs:
         if: runner.os == 'Windows' && matrix.libwdi_enable
         shell: cmd
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "$zip = \"$env:RUNNER_TEMP\libusb-win32.zip\"; $dir = \"$env:RUNNER_TEMP\libusb-win32\"; Invoke-WebRequest -Uri \"https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.2/libusb-win32-bin-1.4.0.2.zip\" -OutFile $zip; Expand-Archive -Force -Path $zip -DestinationPath $dir; $dll = Get-ChildItem -Path $dir -Recurse -Filter libusb0.dll | Select-Object -First 1; if (-not $dll) { throw \"libusb0.dll not found in extracted archive\" }; $root = $dll.Directory.Parent.Parent.FullName; $x86Sys = Join-Path $root \"bin\x86\libusb0.sys\"; $x86Dll = Join-Path $root \"bin\x86\libusb0_x86.dll\"; $x86Alt = Join-Path $root \"bin\x86\libusb0.dll\"; if (-not (Test-Path $x86Dll) -and (Test-Path $x86Alt)) { Copy-Item -Force $x86Alt $x86Dll }; $x64Sys = Join-Path $root \"bin\amd64\libusb0.sys\"; $x64Dll = Join-Path $root \"bin\amd64\libusb0.dll\"; if (-not (Test-Path $x86Sys) -or -not (Test-Path $x86Dll) -or -not (Test-Path $x64Sys) -or -not (Test-Path $x64Dll)) { throw \"libusb-win32 driver files not found under $root\" }; $installRoot = \"D:\\libusb-win32\"; if (Test-Path $installRoot) { Remove-Item -Recurse -Force $installRoot }; Copy-Item -Recurse -Force $root $installRoot; $driverDir = ($installRoot -replace '\\\\','/'); \"LIBWDI_LIBUSB0_DIR=$driverDir\" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8"
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "$zip = \"$env:RUNNER_TEMP\libusb-win32.zip\"; $dir = \"$env:RUNNER_TEMP\libusb-win32\"; Invoke-WebRequest -Uri \"https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.2/libusb-win32-bin-1.4.0.2.zip\" -OutFile $zip; Expand-Archive -Force -Path $zip -DestinationPath $dir; $dll = Get-ChildItem -Path $dir -Recurse -Filter libusb0.dll | Select-Object -First 1; if (-not $dll) { throw \"libusb0.dll not found in extracted archive\" }; $root = $dll.Directory.Parent.Parent.FullName; $x86Sys = Join-Path $root \"bin\x86\libusb0.sys\"; $x86Dll = Join-Path $root \"bin\x86\libusb0_x86.dll\"; $x86Alt = Join-Path $root \"bin\x86\libusb0.dll\"; if (-not (Test-Path $x86Dll) -and (Test-Path $x86Alt)) { Copy-Item -Force $x86Alt $x86Dll }; $x64Sys = Join-Path $root \"bin\amd64\libusb0.sys\"; $x64Dll = Join-Path $root \"bin\amd64\libusb0.dll\"; if (-not (Test-Path $x86Sys) -or -not (Test-Path $x86Dll) -or -not (Test-Path $x64Sys) -or -not (Test-Path $x64Dll)) { throw \"libusb-win32 driver files not found under $root\" }; $installRoot = Join-Path $env:RUNNER_TEMP \"libusb-win32\"; if (Test-Path $installRoot) { Remove-Item -Recurse -Force $installRoot }; Copy-Item -Recurse -Force $root $installRoot; $driverDir = ($installRoot -replace '\\\\','/'); \"LIBWDI_LIBUSB0_DIR=$driverDir\" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8"
 
       # Linux dependencies
       - name: Install Linux Dependencies
@@ -128,12 +128,29 @@ jobs:
           brew list libtool >/dev/null 2>&1 || brew install libtool
           xcode-select --install || true
 
-      - name: Install Windows CMake
+      - name: Install Windows Build Tools
         if: runner.os == 'Windows'
-        shell: cmd
+        shell: powershell
         run: |
-          winget install --id Kitware.CMake --source winget --accept-source-agreements --accept-package-agreements || exit /b 0
-          echo CMake installed
+          if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+            if (Get-Command choco -ErrorAction SilentlyContinue) {
+              choco install cmake -y --installargs 'ADD_CMAKE_TO_PATH=System'
+            } else {
+              Write-Error "Chocolatey not found; install CMake manually or add it to PATH."
+            }
+          }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstalled = $false
+          if (Test-Path $vswhere) {
+            $vsInstalled = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          }
+          if (-not $vsInstalled) {
+            if (Get-Command choco -ErrorAction SilentlyContinue) {
+              choco install visualstudio2022buildtools -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --includeOptional"
+            } else {
+              Write-Error "Visual Studio Build Tools not found; install VS 2022 Build Tools with C++ workload."
+            }
+          }
 
       # Configure Windows
       - name: Configure Windows
@@ -177,7 +194,8 @@ jobs:
         run: |
           set -euo pipefail
           # Build the remote path in Artifactory.
-          DEST_PATH="${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${GITHUB_REPOSITORY}/${GITHUB_WORKFLOW}/${GITHUB_RUN_NUMBER}/${{ matrix.profiles }}/${{ matrix.targets }}.tar.gz"
+          SAFE_WORKFLOW="${GITHUB_WORKFLOW// /-}"
+          DEST_PATH="${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${GITHUB_REPOSITORY}/${SAFE_WORKFLOW}/${GITHUB_RUN_NUMBER}/${{ matrix.name }}.tar.gz"
           echo "Uploading to: $DEST_PATH"
           curl -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
             -T "upload_pkg/${{ matrix.name }}.tar.gz" \
