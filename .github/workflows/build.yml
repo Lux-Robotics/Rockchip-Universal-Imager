@@ -7,6 +7,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   RKDEV_REPO: https://github.com/lux-robotics/rkdeveloptool.git
   RKDEV_TAG: master
+  # Artifactory configuration
+  ARTIFACTORY_URL: ${{ vars.ARTIFACTORY_URL || secrets.ARTIFACTORY_URL }}
+  ARTIFACTORY_REPO: ${{ vars.ARTIFACTORY_REPO || secrets.ARTIFACTORY_REPO }}
 
 jobs:
   build:
@@ -54,7 +57,9 @@ jobs:
             name: macos-arm64
             osx_arch: arm64
 
-    runs-on: ${{ matrix.os }}
+    # Self-hosted runner configuration
+    # Replace labels with your actual runner labels
+    runs-on: ${{ startsWith(matrix.os, 'windows') && 'Windows_11' || startsWith(matrix.os, 'ubuntu') && 'Ubuntu_22' || 'MacOS_Ventura' }}
 
     steps:
       - name: Checkout
@@ -165,11 +170,22 @@ jobs:
         run: |
           cmake --build build --config Release
 
-      # Upload artifacts
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}
+      # Build package for upload
+      - name: Build Package
+        run: |
+          mkdir -p upload_pkg
+          cd build
+          tar -czf ../upload_pkg/${{ matrix.name }}.tar.gz .
 
-          path: |
-            build/**
+      # Upload to Artifactory
+      - name: Upload to Artifactory
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build the remote path in Artifactory.
+          DEST_PATH="${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${GITHUB_REPOSITORY}/${GITHUB_WORKFLOW}/${GITHUB_RUN_NUMBER}/${{ matrix.profiles }}/${{ matrix.targets }}.tar.gz"
+          echo "Uploading to: $DEST_PATH"
+          curl -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            -T "upload_pkg/${{ matrix.name }}.tar.gz" \
+            "$DEST_PATH"
+          echo "Upload complete"
