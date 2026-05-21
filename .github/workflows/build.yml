@@ -120,11 +120,20 @@ jobs:
         run: |
           brew update
           brew list cmake >/dev/null 2>&1 || brew install cmake
+          brew list ninja >/dev/null 2>&1 || brew install ninja
           brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
           brew list libusb >/dev/null 2>&1 || brew install libusb
           brew list autoconf >/dev/null 2>&1 || brew install autoconf
           brew list automake >/dev/null 2>&1 || brew install automake
           brew list libtool >/dev/null 2>&1 || brew install libtool
+          xcode-select --install || true
+
+      - name: Install Windows CMake
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          winget install --id Kitware.CMake --source winget --accept-source-agreements --accept-package-agreements || exit /b 0
+          echo CMake installed
 
       # Configure Windows
       - name: Configure Windows
