@@ -83,6 +83,12 @@ target_include_directories(hardware-helper PRIVATE
     ${CMAKE_BINARY_DIR}/generated
 )
 
+add_custom_command(TARGET hardware-helper POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/loader_binaries
+            $<TARGET_FILE_DIR:hardware-helper>/loader_binaries
+)
+
 if(TARGET hardware-helper)
     target_compile_options(hardware-helper PRIVATE
         $<$<AND:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>,$<BOOL:${HAS_WCHANGES_MEANING}>>:-Wno-error=changes-meaning>

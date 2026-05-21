@@ -113,8 +113,7 @@ jobs:
       - name: Build Package
         run: |
           mkdir -p upload_pkg
-          cd build
-          tar -czf ../upload_pkg/${{ matrix.name }}.tar.gz .
+          tar -czf upload_pkg/${{ matrix.name }}.tar.gz -C build/bin .
 
       # Upload to Artifactory (Windows)
       - name: Upload to Artifactory (Windows)

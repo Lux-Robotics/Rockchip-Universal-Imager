@@ -188,7 +188,7 @@ void update_flash_progress(webview::webview& w, int percent) {
 std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned short pid, std::string& error) {
     for (size_t i = 0; i < kLoaderMapSize; ++i) {
         if (kLoaderMap[i].vid == vid && kLoaderMap[i].pid == pid) {
-            const std::filesystem::path path = std::filesystem::current_path() / "loaders" / kLoaderMap[i].filename;
+            const std::filesystem::path path = std::filesystem::current_path() / "loader_binaries" / kLoaderMap[i].filename;
             if (!std::filesystem::exists(path)) {
                 error = "loader file not found: " + path.string();
                 return std::nullopt;
