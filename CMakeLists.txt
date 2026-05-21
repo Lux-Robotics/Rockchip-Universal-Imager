@@ -10,6 +10,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 option(HWHELPER_DISABLE_GPU "Disable GPU usage in embedded browser" ON)
 
 include(FetchContent)
+include(CheckCXXCompilerFlag)
 
 FetchContent_Declare(
     webview
@@ -28,7 +29,8 @@ FetchContent_Declare(
 set(REPROC++ ON CACHE BOOL "Build reproc++" FORCE)
 FetchContent_MakeAvailable(reproc)
 
-if(TARGET reproc++)
+check_cxx_compiler_flag("-Wchanges-meaning" HAS_WCHANGES_MEANING)
+if(TARGET reproc++ AND HAS_WCHANGES_MEANING)
     target_compile_options(reproc++ PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=changes-meaning>
         $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-changes-meaning>
@@ -83,8 +85,8 @@ target_include_directories(hardware-helper PRIVATE
 
 if(TARGET hardware-helper)
     target_compile_options(hardware-helper PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=changes-meaning>
-        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-changes-meaning>
+        $<$<AND:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>,$<BOOL:${HAS_WCHANGES_MEANING}>>:-Wno-error=changes-meaning>
+        $<$<AND:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>,$<BOOL:${HAS_WCHANGES_MEANING}>>:-Wno-changes-meaning>
     )
     if(HWHELPER_DISABLE_GPU)
         target_compile_definitions(hardware-helper PRIVATE HWHELPER_DISABLE_GPU=1)
