@@ -116,10 +116,23 @@ jobs:
           cd build
           tar -czf ../upload_pkg/${{ matrix.name }}.tar.gz .
 
-      # Upload to Artifactory
-      - name: Upload to Artifactory
+      # Upload to Artifactory (Windows)
+      - name: Upload to Artifactory (Windows)
+        if: ${{ runner.os == 'Windows' && env.ARTIFACTORY_URL != '' && env.ARTIFACTORY_REPO != '' && env.ARTIFACTORY_USER != '' && env.ARTIFACTORY_TOKEN != '' }}
+        shell: powershell
+        run: |
+          $safeWorkflow = $env:GITHUB_WORKFLOW -replace ' ', '-'
+          $destPath = "$env:ARTIFACTORY_URL/$env:ARTIFACTORY_REPO/$env:GITHUB_REPOSITORY/$safeWorkflow/$env:GITHUB_RUN_NUMBER/${{ matrix.name }}.tar.gz"
+          Write-Host "Uploading to: $destPath"
+          $pair = "$env:ARTIFACTORY_USER`:$env:ARTIFACTORY_TOKEN"
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+          Invoke-WebRequest -Uri $destPath -Method Put -InFile "upload_pkg/${{ matrix.name }}.tar.gz" -Headers @{ Authorization = "Basic $auth" }
+          Write-Host "Upload complete"
+
+      # Upload to Artifactory (Linux/macOS)
+      - name: Upload to Artifactory (Unix)
         shell: bash
-        if: ${{ env.ARTIFACTORY_URL != '' && env.ARTIFACTORY_REPO != '' && env.ARTIFACTORY_USER != '' && env.ARTIFACTORY_TOKEN != '' }}
+        if: ${{ runner.os != 'Windows' && env.ARTIFACTORY_URL != '' && env.ARTIFACTORY_REPO != '' && env.ARTIFACTORY_USER != '' && env.ARTIFACTORY_TOKEN != '' }}
         run: |
           set -euo pipefail
           # Build the remote path in Artifactory.
