@@ -14,52 +14,50 @@ env:
 jobs:
   build:
     strategy:
-      fail-fast: false
-
       matrix:
         include:
 
-          # Windows x64
-          - os: windows-latest
-            name: windows-x64
-            arch: x64
-            msystem: MINGW64
-            msys2_libusb: mingw-w64-x86_64-libusb
-            msys2_toolchain: mingw-w64-x86_64-toolchain
-            rkdev_enable: true
-            libwdi_enable: true
+        - os: windows-latest
+          runs_on: Windows_11
+          name: windows-x64
+          arch: x64
+          msystem: MINGW64
+          msys2_libusb: mingw-w64-x86_64-libusb
+          msys2_toolchain: mingw-w64-x86_64-toolchain
+          rkdev_enable: true
+          libwdi_enable: true
 
-          # Windows ARM64
-          - os: windows-latest
-            name: windows-arm64
-            arch: ARM64
-            msystem: CLANGARM64
-            msys2_libusb: mingw-w64-clang-aarch64-libusb
-            msys2_toolchain: mingw-w64-clang-aarch64-toolchain
-            rkdev_enable: false
-            libwdi_enable: false
+        # - os: windows-latest
+        #   runs_on: Windows_11
+        #   name: windows-arm64
+        #   arch: ARM64
+        #   msystem: CLANGARM64
+        #   msys2_libusb: mingw-w64-clang-aarch64-libusb
+        #   msys2_toolchain: mingw-w64-clang-aarch64-toolchain
+        #   rkdev_enable: false
+        #   libwdi_enable: false
 
-          # Linux x64
-          - os: ubuntu-24.04
-            name: linux-x64
+        - os: ubuntu-24.04
+          runs_on: Ubuntu_22
+          name: linux-x64
 
-          # Linux ARM64
-          - os: ubuntu-24.04-arm
-            name: linux-arm64
+        # - os: ubuntu-24.04-arm
+        #   runs_on: Ubuntu_22
+        #   name: linux-arm64
 
-          # macOS Intel
-          - os: macos-13
-            name: macos-intel
-            osx_arch: x86_64
+        - os: macos-13
+          runs_on: MacOS_Ventura
+          name: macos-intel
+          osx_arch: x86_64
 
-          # macOS ARM64
-          - os: macos-14
-            name: macos-arm64
-            osx_arch: arm64
+        # - os: macos-14
+        #   runs_on: MacOS_Ventura
+        #   name: macos-arm64
+        #   osx_arch: arm64
 
     # Self-hosted runner configuration
     # Replace labels with your actual runner labels
-    runs-on: ${{ startsWith(matrix.os, 'windows') && 'Windows_11' || startsWith(matrix.os, 'ubuntu') && 'Ubuntu_22' || 'MacOS_Ventura' }}
+    runs-on: ${{ matrix.runs_on }}
 
     steps:
       - name: Checkout
