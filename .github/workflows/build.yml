@@ -119,15 +119,13 @@ jobs:
       # Upload to Artifactory (Windows)
       - name: Upload to Artifactory (Windows)
         if: ${{ runner.os == 'Windows' && env.ARTIFACTORY_URL != '' && env.ARTIFACTORY_REPO != '' && env.ARTIFACTORY_USER != '' && env.ARTIFACTORY_TOKEN != '' }}
-        shell: powershell
+        shell: cmd
         run: |
-          $safeWorkflow = $env:GITHUB_WORKFLOW -replace ' ', '-'
-          $destPath = "$env:ARTIFACTORY_URL/$env:ARTIFACTORY_REPO/$env:GITHUB_REPOSITORY/$safeWorkflow/$env:GITHUB_RUN_NUMBER/${{ matrix.name }}.tar.gz"
-          Write-Host "Uploading to: $destPath"
-          $pair = "$env:ARTIFACTORY_USER`:$env:ARTIFACTORY_TOKEN"
-          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
-          Invoke-WebRequest -Uri $destPath -Method Put -InFile "upload_pkg/${{ matrix.name }}.tar.gz" -Headers @{ Authorization = "Basic $auth" }
-          Write-Host "Upload complete"
+          set "SAFE_WORKFLOW=%GITHUB_WORKFLOW: =-%"
+          set "DEST_PATH=%ARTIFACTORY_URL%/%ARTIFACTORY_REPO%/%GITHUB_REPOSITORY%/%SAFE_WORKFLOW%/%GITHUB_RUN_NUMBER%/${{ matrix.name }}.tar.gz"
+          echo Uploading to: %DEST_PATH%
+          curl.exe -u "%ARTIFACTORY_USER%:%ARTIFACTORY_TOKEN%" -T "upload_pkg/${{ matrix.name }}.tar.gz" "%DEST_PATH%"
+          echo Upload complete
 
       # Upload to Artifactory (Linux/macOS)
       - name: Upload to Artifactory (Unix)
