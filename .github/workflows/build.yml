@@ -8,8 +8,8 @@ env:
   RKDEV_REPO: https://github.com/lux-robotics/rkdeveloptool.git
   RKDEV_TAG: master
   # Artifactory configuration
-  ARTIFACTORY_URL: ${{ vars.ARTIFACTORY_URL || secrets.ARTIFACTORY_URL }}
-  ARTIFACTORY_REPO: ${{ vars.ARTIFACTORY_REPO || secrets.ARTIFACTORY_REPO }}
+  ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+  ARTIFACTORY_REPO: ${{ secrets.ARTIFACTORY_REPO }}
 
 jobs:
   build:
@@ -18,7 +18,7 @@ jobs:
         include:
 
         - os: windows-latest
-          runs_on: [self-hosted, Windows, X64, Windows_11]
+          runs_on: [self-hosted, Windows, X64]
           name: Windows_11
           arch: x64
           msystem: MINGW64
@@ -38,7 +38,7 @@ jobs:
         #   libwdi_enable: false
 
         - os: ubuntu-24.04
-          runs_on: [self-hosted, Linux, X64, Ubuntu_22]
+          runs_on: [self-hosted, Linux, X64]
           name: Ubuntu_22
 
         # - os: ubuntu-24.04-arm
@@ -46,7 +46,7 @@ jobs:
         #   name: linux-arm64
 
         - os: macos-13
-          runs_on: [self-hosted, macOS, X64, MacOS_Ventura]
+          runs_on: [self-hosted, macOS, X64]
           name: MacOS_Ventura
           osx_arch: x86_64
 
