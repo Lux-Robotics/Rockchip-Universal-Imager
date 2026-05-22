@@ -32,20 +32,6 @@
 #endif
 
 
-namespace {
-
-std::atomic<bool> g_polling_enabled{true};
-std::atomic<bool> g_polling_stop{false};
-std::thread g_polling_thread;
-std::atomic<bool> g_driver_install_running{false};
-std::atomic<bool> g_webview_alive{false};
-std::atomic<bool> g_ui_ready{false};
-std::atomic<bool> g_flash_running{false};
-std::atomic<unsigned int> g_last_detected_vid{0};
-std::atomic<unsigned int> g_last_detected_pid{0};
-std::shared_ptr<rkdev::RkdevTask> g_flash_task;
-std::mutex g_flash_mutex;
-
 struct StartResult {
     bool started = false;
     std::string error;
@@ -73,6 +59,20 @@ struct LogContentsResult {
     bool ok = false;
     std::string text;
 };
+
+namespace {
+
+std::atomic<bool> g_polling_enabled{true};
+std::atomic<bool> g_polling_stop{false};
+std::thread g_polling_thread;
+std::atomic<bool> g_driver_install_running{false};
+std::atomic<bool> g_webview_alive{false};
+std::atomic<bool> g_ui_ready{false};
+std::atomic<bool> g_flash_running{false};
+std::atomic<unsigned int> g_last_detected_vid{0};
+std::atomic<unsigned int> g_last_detected_pid{0};
+std::shared_ptr<rkdev::RkdevTask> g_flash_task;
+std::mutex g_flash_mutex;
 
 void set_device_polling_enabled(bool enabled) {
     g_polling_enabled.store(enabled);

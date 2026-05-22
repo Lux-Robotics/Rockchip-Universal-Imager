@@ -20,6 +20,71 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(saucer)
 
+if(APPLE)
+    function(patch_saucer_functional)
+        set(functional_base "${CMAKE_BINARY_DIR}/_deps/functional-src/include/std23/__functional_base.h")
+        set(functional_move_only "${CMAKE_BINARY_DIR}/_deps/functional-src/include/std23/move_only_function.h")
+
+        if(EXISTS "${functional_base}")
+            file(READ "${functional_base}" base_content)
+            set(base_original "${base_content}")
+            string(REPLACE
+                "std::invoke_result_t<decltype(_select_param_type<T>)>::type"
+                "std::invoke_result_t<decltype(_select_param_type<T>)>"
+                base_content
+                "${base_content}")
+            string(REPLACE
+                "_adapt_signature<Fp>::type"
+                "typename _adapt_signature<Fp>::type"
+                base_content
+                "${base_content}")
+            string(REPLACE
+                "_drop_first_arg_to_invoke<F, T>::type"
+                "typename _drop_first_arg_to_invoke<F, T>::type"
+                base_content
+                "${base_content}")
+            if(NOT base_content STREQUAL base_original)
+                file(WRITE "${functional_base}" "${base_content}")
+            endif()
+        endif()
+
+        if(EXISTS "${functional_move_only}")
+            file(READ "${functional_move_only}" mo_content)
+            set(mo_original "${mo_content}")
+            string(REPLACE
+                "using Fp = quals<T>::type;"
+                "using Fp = typename quals<T>::type;"
+                mo_content
+                "${mo_content}")
+            string(REPLACE
+                "using D = std::unique_ptr<T>::deleter_type;"
+                "using D = typename std::unique_ptr<T>::deleter_type;"
+                mo_content
+                "${mo_content}")
+            string(REPLACE
+                "template<class T> using cv = signature::template cv<T>;"
+                "template<class T> using cv = typename signature::template cv<T>;"
+                mo_content
+                "${mo_content}")
+            string(REPLACE
+                "template<class T> using ref = signature::template ref<T>;"
+                "template<class T> using ref = typename signature::template ref<T>;"
+                mo_content
+                "${mo_content}")
+            string(REPLACE
+                "template<class T> using inv_quals = inv_quals_f<T>::type;"
+                "template<class T> using inv_quals = typename inv_quals_f<T>::type;"
+                mo_content
+                "${mo_content}")
+            if(NOT mo_content STREQUAL mo_original)
+                file(WRITE "${functional_move_only}" "${mo_content}")
+            endif()
+        endif()
+    endfunction()
+
+    patch_saucer_functional()
+endif()
+
 FetchContent_Declare(
     reproc
     GIT_REPOSITORY https://github.com/DaanDeMeyer/reproc.git
