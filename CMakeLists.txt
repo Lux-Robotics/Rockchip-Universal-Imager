@@ -76,6 +76,11 @@ if(APPLE)
                 "template<class T> using inv_quals = typename inv_quals_f<T>::type;"
                 mo_content
                 "${mo_content}")
+            string(REPLACE
+                "using vtable = trait::vtable;"
+                "using vtable = typename trait::vtable;"
+                mo_content
+                "${mo_content}")
             if(NOT mo_content STREQUAL mo_original)
                 file(WRITE "${functional_move_only}" "${mo_content}")
             endif()
