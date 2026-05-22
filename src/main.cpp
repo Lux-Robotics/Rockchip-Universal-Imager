@@ -275,7 +275,7 @@ bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const 
 
 coco::stray run_app(saucer::application* app) {
     auto window = saucer::window::create(app).value();
-    auto webview = saucer::smartview::create({.window = window}).value();
+    auto webview = std::make_shared<saucer::smartview>(saucer::smartview::create({.window = window}).value());
 
     g_webview_alive.store(true);
 
