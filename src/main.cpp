@@ -1,11 +1,10 @@
-#include "webview/webview.h"
+#include <saucer/embedded/all.hpp>
+#include <saucer/smartview.hpp>
 #include "core/rkdeveloptool_runner.h"
 #include "core/logging.h"
 #include "core/libusb-win32-helper.h"
-#include "core/webview_bindings.h"
 #include "core/file_dialog.h"
 #include "core/loader_map.h"
-#include "ui_embed.h"
 
 #include <atomic>
 #include <algorithm>
@@ -47,46 +46,45 @@ std::atomic<unsigned int> g_last_detected_pid{0};
 std::shared_ptr<rkdev::RkdevTask> g_flash_task;
 std::mutex g_flash_mutex;
 
-void replace_all(std::string& text, const std::string& from, const std::string& to) {
-    if (from.empty()) {
-        return;
-    }
-    size_t start = 0;
-    while ((start = text.find(from, start)) != std::string::npos) {
-        text.replace(start, from.size(), to);
-        start += to.size();
-    }
-}
+struct StartResult {
+    bool started = false;
+    std::string error;
+};
 
-std::string build_ui_html() {
-    std::string html = ui::kIndexHtml ? ui::kIndexHtml : "";
-    const std::string css = ui::kAppCss ? ui::kAppCss : "";
-    const std::string js = ui::kAppJs ? ui::kAppJs : "";
-    replace_all(html, "{{INLINE_CSS}}", css);
-    replace_all(html, "{{INLINE_JS}}", js);
-    if (!css.empty()) {
-        replace_all(html, "<link rel=\"stylesheet\" href=\"app.css\" />", "<style>" + css + "</style>");
-        replace_all(html, "<link rel=\"stylesheet\" href=\"app.css\">", "<style>" + css + "</style>");
-        replace_all(html, "<link rel='stylesheet' href='app.css' />", "<style>" + css + "</style>");
-        replace_all(html, "<link rel='stylesheet' href='app.css'>", "<style>" + css + "</style>");
-    }
-    if (!js.empty()) {
-        replace_all(html, "<script src=\"app.js\"></script>", "<script>" + js + "</script>");
-        replace_all(html, "<script src='app.js'></script>", "<script>" + js + "</script>");
-    }
-    return html;
-}
+struct OperationResult {
+    bool success = false;
+    std::string error;
+};
+
+struct FilePickResult {
+    bool success = false;
+    std::string path;
+    std::string error;
+};
+
+struct DriverInfoResult {
+    bool found = false;
+    bool ok = false;
+    std::string driver;
+    std::string error;
+};
+
+struct LogContentsResult {
+    bool ok = false;
+    std::string text;
+};
 
 void set_device_polling_enabled(bool enabled) {
     g_polling_enabled.store(enabled);
 }
 
-void start_device_polling(webview::webview& w) {
+void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
     if (g_polling_thread.joinable()) {
         return;
     }
 
-    g_polling_thread = std::thread([&w]() {
+    std::weak_ptr<saucer::smartview> weak_view = view;
+    g_polling_thread = std::thread([weak_view]() {
         std::string last_output;
 
         while (!g_polling_stop.load()) {
@@ -153,10 +151,10 @@ void start_device_polling(webview::webview& w) {
                 const std::string status = connected ? "connected" : "disconnected";
                 const std::string info = output;
 
-                w.dispatch([&w, status, info]() {
-                    w.eval("window.updateDeviceStatus && window.updateDeviceStatus('" + status + "')");
-                    w.eval("window.updateDeviceInfo && window.updateDeviceInfo(" + bindings::js_string_literal(info) + ")");
-                });
+                if (auto view = weak_view.lock()) {
+                    view->execute("window.updateDeviceStatus && window.updateDeviceStatus({})", status);
+                    view->execute("window.updateDeviceInfo && window.updateDeviceInfo({})", info);
+                }
             }
 
             std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -164,25 +162,20 @@ void start_device_polling(webview::webview& w) {
     });
 }
 
-void append_live_log(webview::webview& w, const std::string& line) {
+void append_live_log(const std::shared_ptr<saucer::smartview>& view, const std::string& line) {
     logging::write("flash", line);
     if (!g_webview_alive.load()) {
         return;
     }
-    const std::string payload = bindings::js_string_literal(line);
-    w.dispatch([&w, payload]() {
-        w.eval("window.appendLiveLog && window.appendLiveLog(" + payload + ")");
-    });
+    view->execute("window.appendLiveLog && window.appendLiveLog({})", line);
 }
 
-void update_flash_progress(webview::webview& w, int percent) {
+void update_flash_progress(const std::shared_ptr<saucer::smartview>& view, int percent) {
     if (!g_webview_alive.load()) {
         return;
     }
     const int clamped = std::clamp(percent, 0, 100);
-    w.dispatch([&w, clamped]() {
-        w.eval("window.updateFlashProgress && window.updateFlashProgress(" + std::to_string(clamped) + ")");
-    });
+    view->execute("window.updateFlashProgress && window.updateFlashProgress({})", clamped);
 }
 
 std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned short pid, std::string& error) {
@@ -205,7 +198,7 @@ std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned shor
     return std::nullopt;
 }
 
-bool start_flash_task(webview::webview& w,
+bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
                       const std::vector<std::string>& args,
                       bool parse_progress) {
     bool expected = false;
@@ -213,18 +206,18 @@ bool start_flash_task(webview::webview& w,
         return false;
     }
 
-    update_flash_progress(w, 0);
-    append_live_log(w, "Starting rkdeveloptool " + args.front());
+    update_flash_progress(view, 0);
+    append_live_log(view, "Starting rkdeveloptool " + args.front());
 
     auto on_line = [&](const std::string& line) {
-        append_live_log(w, line);
+        append_live_log(view, line);
         if (parse_progress) {
             static const std::regex progress_regex("([0-9]{1,3})%");
             std::smatch match;
             if (std::regex_search(line, match, progress_regex) && match.size() >= 2) {
                 try {
                     const int percent = std::stoi(match[1].str());
-                    update_flash_progress(w, percent);
+                    update_flash_progress(view, percent);
                 } catch (...) {
                 }
             }
@@ -237,19 +230,14 @@ bool start_flash_task(webview::webview& w,
             return;
         }
         if (result.exit_code == 0 && result.error_message.empty() && !result.was_cancelled) {
-            update_flash_progress(w, 100);
+            update_flash_progress(view, 100);
         }
         const bool success = (result.exit_code == 0 && result.error_message.empty() && !result.was_cancelled);
         const std::string error_text = result.error_message.empty() && !success
             ? "rkdeveloptool failed with exit code " + std::to_string(result.exit_code)
             : result.error_message;
-        const std::string payload = std::string("{") +
-            "\"success\":" + (success ? "true" : "false") + "," +
-            "\"error\":" + bindings::js_string_literal(error_text) +
-            "}";
-        w.dispatch([&w, payload]() {
-            w.eval("window.onFlashComplete && window.onFlashComplete(" + payload + ")");
-        });
+        const OperationResult payload{success, error_text};
+        view->execute("window.onFlashComplete && window.onFlashComplete({})", payload);
     };
 
     auto task = rkdev::start_rkdeveloptool(args, on_line, on_exit);
@@ -260,14 +248,14 @@ bool start_flash_task(webview::webview& w,
     return true;
 }
 
-bool start_driver_install(webview::webview& w, const std::string& device_name) {
+bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const std::string& device_name) {
     bool expected = false;
     if (!g_driver_install_running.compare_exchange_strong(expected, true)) {
         return false;
     }
 
-    webview::webview* wptr = &w;
-    std::thread([wptr, device_name]() {
+    std::weak_ptr<saucer::smartview> weak_view = view;
+    std::thread([weak_view, device_name]() {
         usb_driver::InstallOptions options;
         options.device_name = device_name;
         const auto result = usb_driver::install_libusb_win32(options);
@@ -276,222 +264,173 @@ bool start_driver_install(webview::webview& w, const std::string& device_name) {
         if (!g_webview_alive.load()) {
             return;
         }
-
-        const std::string payload = std::string("{") +
-            "\"success\":" + (result.success ? "true" : "false") + "," +
-            "\"error\":" + bindings::js_string_literal(result.error_message) +
-            "}";
-        wptr->dispatch([wptr, payload]() {
-            wptr->eval("window.onDriverInstallComplete && window.onDriverInstallComplete(" + payload + ")");
-        });
+        if (auto view = weak_view.lock()) {
+            const OperationResult payload{result.success, result.error_message};
+            view->execute("window.onDriverInstallComplete && window.onDriverInstallComplete({})", payload);
+        }
     }).detach();
 
     return true;
 }
 
-} // namespace
+coco::stray run_app(saucer::application* app) {
+    auto window = saucer::window::create(app).value();
+    auto webview = saucer::smartview::create({.window = window}).value();
+
+    g_webview_alive.store(true);
+
+    webview->expose("setPollingEnabled", [](bool enabled) {
+        set_device_polling_enabled(enabled);
+        return true;
+    });
+
+    webview->expose("logWrite", [](const std::string& message) {
+        logging::write(message);
+        return true;
+    });
+
+    webview->expose("uiReady", [webview]() {
+        bool expected = false;
+        if (g_ui_ready.compare_exchange_strong(expected, true)) {
+            start_device_polling(webview);
+        }
+        return true;
+    });
+
+    webview->expose("getLogContents", []() {
+        return LogContentsResult{true, logging::read_all()};
+    });
+
+    webview->expose("getUsbDriverInfo", []() {
+        const auto info = usb_driver::query_driver();
+        return DriverInfoResult{info.device_found, info.is_libusb_win32, info.driver_name, info.error_message};
+    });
 
 #ifdef _WIN32
-
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
-
-#else
-
-int main()
-
-#endif
-
-{
-    try {
-#ifdef _WIN32
-        int exit_code = 0;
-        if (win_driver::try_handle_driver_install_cli(exit_code)) {
-            return exit_code;
+    webview->expose("installUsbDriver", [webview](const std::string& device_name) {
+        if (!start_driver_install(webview, device_name)) {
+            return StartResult{false, "driver install already in progress"};
         }
+        return StartResult{true, ""};
+    });
 #endif
-#ifdef _WIN32
-        wchar_t appdata_path[MAX_PATH];
-        const DWORD appdata_len = GetEnvironmentVariableW(
-            L"LOCALAPPDATA",
-            appdata_path,
-            static_cast<DWORD>(std::size(appdata_path)));
-        if (appdata_len > 0 && appdata_len < std::size(appdata_path)) {
-            std::wstring user_data_dir = appdata_path;
-            user_data_dir += L"\\HardwareHelper\\WebView2";
-            SetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", user_data_dir.c_str());
+
+    webview->expose("selectImageFile", []() {
+        std::string error;
+        auto path = pick_img_file(error);
+        if (!path) {
+            return FilePickResult{false, std::string(), error.empty() ? "file picker canceled" : error};
+        }
+        return FilePickResult{true, *path, ""};
+    });
+
+    webview->expose("flashBootloader", [webview]() {
+        const unsigned int vid = g_last_detected_vid.load();
+        const unsigned int pid = g_last_detected_pid.load();
+        if (vid == 0 || pid == 0) {
+            return StartResult{false, "device VID/PID not detected"};
         }
 
-#if defined(HWHELPER_DISABLE_GPU)
-        SetEnvironmentVariableW(
-            L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            L"--disable-gpu --disable-gpu-compositing --disable-extensions --disable-features=BackForwardCache --no-first-run --disable-background-networking --disable-component-update");
-#endif
-    #elif defined(__APPLE__)
-    #if defined(HWHELPER_DISABLE_GPU)
-        setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
-    #endif
-    #elif defined(__linux__)
-    #if defined(HWHELPER_DISABLE_GPU)
-        setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
-        setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 1);
-    #endif
-#endif
-        webview::webview w(false, nullptr);
-        g_webview_alive.store(true);
-
-        w.bind("setPollingEnabled", [](const std::string& req) {
-            set_device_polling_enabled(bindings::parse_bool_arg(req, true));
-            return std::string("true");
-        });
-
-        w.bind("logWrite", [](const std::string& req) {
-            logging::write(bindings::parse_string_arg(req));
-            return std::string("true");
-        });
-
-        w.bind("uiReady", [&w](const std::string&) {
-            bool expected = false;
-            if (g_ui_ready.compare_exchange_strong(expected, true)) {
-                start_device_polling(w);
-            }
-            return std::string("true");
-        });
-
-        w.bind("getLogContents", [](const std::string&) {
-            const std::string text = logging::read_all();
-            return std::string("{") +
-                "\"ok\":true," +
-                "\"text\":" + bindings::js_string_literal(text) +
-                "}";
-        });
-
-        w.bind("getUsbDriverInfo", [](const std::string&) {
-            const auto info = usb_driver::query_driver();
-            return std::string("{") +
-                "\"found\":" + (info.device_found ? "true" : "false") + "," +
-                "\"ok\":" + (info.is_libusb_win32 ? "true" : "false") + "," +
-                "\"driver\":" + bindings::js_string_literal(info.driver_name) + "," +
-                "\"error\":" + bindings::js_string_literal(info.error_message) +
-                "}";
-        });
-
-        w.bind("installUsbDriver", [&w](const std::string& req) {
-            const std::string device_name = bindings::parse_string_arg(req);
-            if (!start_driver_install(w, device_name)) {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal("driver install already in progress") +
-                    "}";
-            }
-            return std::string("{") +
-                "\"started\":true" +
-                "}";
-        });
-
-        w.bind("selectImageFile", [](const std::string&) {
-            std::string error;
-            auto path = pick_img_file(error);
-            if (!path) {
-                return std::string("{") +
-                    "\"success\":false," +
-                    "\"error\":" + bindings::js_string_literal(error.empty() ? "file picker canceled" : error) +
-                    "}";
-            }
-            return std::string("{") +
-                "\"success\":true," +
-                "\"path\":" + bindings::js_string_literal(*path) +
-                "}";
-        });
-
-        w.bind("flashBootloader", [&w](const std::string&) {
-            const unsigned int vid = g_last_detected_vid.load();
-            const unsigned int pid = g_last_detected_pid.load();
-            if (vid == 0 || pid == 0) {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal("device VID/PID not detected") +
-                    "}";
-            }
-
-            std::string error;
-            auto loader = loader_path_for_vid(static_cast<unsigned short>(vid), static_cast<unsigned short>(pid), error);
-            if (!loader) {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal(error) +
-                    "}";
-            }
-
-            if (!start_flash_task(w, {"db", *loader}, false)) {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal("flash already in progress") +
-                    "}";
-            }
-
-            return std::string("{") +
-                "\"started\":true" +
-                "}";
-        });
-
-        w.bind("flashImage", [&w](const std::string& req) {
-            const std::string image_path = bindings::parse_string_arg(req);
-            if (image_path.empty()) {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal("no .img file selected") +
-                    "}";
-            }
-
-            const std::filesystem::path path(image_path);
-            if (path.extension() != ".img") {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal("selected file is not a .img") +
-                    "}";
-            }
-            if (!std::filesystem::exists(path)) {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal("selected file does not exist") +
-                    "}";
-            }
-
-            if (!start_flash_task(w, {"wl", "0", image_path}, true)) {
-                return std::string("{") +
-                    "\"started\":false," +
-                    "\"error\":" + bindings::js_string_literal("flash already in progress") +
-                    "}";
-            }
-
-            return std::string("{") +
-                "\"started\":true" +
-                "}";
-        });
-
-        w.set_title("Hardware Helper");
-        w.set_size(800, 600, WEBVIEW_HINT_NONE);
-
-        const std::string ui_html = build_ui_html();
-        if (ui_html.empty()) {
-            w.set_html("<html><body style=\"background:#111;color:#bbb;font-family:sans-serif;\">Missing embedded UI</body></html>");
-        } else {
-            w.set_html(ui_html);
+        std::string error;
+        auto loader = loader_path_for_vid(static_cast<unsigned short>(vid), static_cast<unsigned short>(pid), error);
+        if (!loader) {
+            return StartResult{false, error};
         }
 
-        w.run();
-        g_webview_alive.store(false);
-    }
-    catch (const webview::exception& e) {
-        std::cerr << e.what() << '\n';
-        g_webview_alive.store(false);
-        return 1;
-    }
+        if (!start_flash_task(webview, {"db", *loader}, false)) {
+            return StartResult{false, "flash already in progress"};
+        }
 
+        return StartResult{true, ""};
+    });
+
+    webview->expose("flashImage", [webview](const std::string& image_path) {
+        if (image_path.empty()) {
+            return StartResult{false, "no .img file selected"};
+        }
+
+        const std::filesystem::path path(image_path);
+        if (path.extension() != ".img") {
+            return StartResult{false, "selected file is not a .img"};
+        }
+        if (!std::filesystem::exists(path)) {
+            return StartResult{false, "selected file does not exist"};
+        }
+
+        if (!start_flash_task(webview, {"wl", "0", image_path}, true)) {
+            return StartResult{false, "flash already in progress"};
+        }
+
+        return StartResult{true, ""};
+    });
+
+    window->set_title("Hardware Helper");
+    window->set_size({.w = 800, .h = 600});
+
+    webview->embed(saucer::embedded::all());
+    webview->serve("/index.html");
+    window->show();
+
+    co_await app->finish();
+
+    g_webview_alive.store(false);
     g_polling_stop.store(true);
     if (g_polling_thread.joinable()) {
         g_polling_thread.join();
     }
-
-    return 0;
 }
+
+} // namespace
+
+int run_application() {
+#ifdef _WIN32
+    int exit_code = 0;
+    if (win_driver::try_handle_driver_install_cli(exit_code)) {
+        return exit_code;
+    }
+#endif
+#ifdef _WIN32
+    wchar_t appdata_path[MAX_PATH];
+    const DWORD appdata_len = GetEnvironmentVariableW(
+        L"LOCALAPPDATA",
+        appdata_path,
+        static_cast<DWORD>(std::size(appdata_path)));
+    if (appdata_len > 0 && appdata_len < std::size(appdata_path)) {
+        std::wstring user_data_dir = appdata_path;
+        user_data_dir += L"\\HardwareHelper\\WebView2";
+        SetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", user_data_dir.c_str());
+    }
+
+#if defined(HWHELPER_DISABLE_GPU)
+    SetEnvironmentVariableW(
+        L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        L"--disable-gpu --disable-gpu-compositing --disable-extensions --disable-features=BackForwardCache --no-first-run --disable-background-networking --disable-component-update");
+#endif
+#elif defined(__APPLE__)
+#if defined(HWHELPER_DISABLE_GPU)
+    setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
+#endif
+#elif defined(__linux__)
+#if defined(HWHELPER_DISABLE_GPU)
+    setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
+    setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 1);
+#endif
+#endif
+
+    auto app = saucer::application::create({.id = "hardware-helper"});
+    return app->run(run_app);
+}
+
+#ifdef _WIN32
+
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    return run_application();
+}
+
+#else
+
+int main() {
+    return run_application();
+}
+
+#endif

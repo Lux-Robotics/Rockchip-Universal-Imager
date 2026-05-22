@@ -27,6 +27,7 @@ const logPanel = document.getElementById("logPanel");
 const liveLog = document.getElementById("liveLog");
 const copyLog = document.getElementById("copyLog");
 const clearLog = document.getElementById("clearLog");
+const api = window.saucer && window.saucer.exposed ? window.saucer.exposed : null;
 
 function render() {
     const connected = lastStatus === "connected";
@@ -68,12 +69,11 @@ function setFlashRunning(running) {
 }
 
 async function refreshDriverInfo() {
-    if (!window.getUsbDriverInfo) {
+    if (!api || !api.getUsbDriverInfo) {
         driverStatus.textContent = "driver info unavailable";
         return;
     }
-    const raw = await window.getUsbDriverInfo();
-    const info = JSON.parse(raw);
+    const info = await api.getUsbDriverInfo();
     if (!info.found) {
         driverStatus.textContent = info.error || "device not found";
         return;
@@ -102,17 +102,18 @@ window.updateDeviceInfo = (info) => {
 pollingToggle.addEventListener("click", async () => {
     pollingEnabled = !pollingEnabled;
     pollingToggle.textContent = pollingEnabled ? "Pause Polling" : "Resume Polling";
-    await window.setPollingEnabled(pollingEnabled);
+    if (api && api.setPollingEnabled) {
+        await api.setPollingEnabled(pollingEnabled);
+    }
 });
 
 toggleLog.addEventListener("click", () => {
     logVisible = !logVisible;
     logPanel.style.display = logVisible ? "block" : "none";
     toggleLog.textContent = logVisible ? "Hide Log" : "Show Log";
-    if (logVisible && window.getLogContents && !logLoaded && !logCleared) {
-        window.getLogContents().then(raw => {
+    if (logVisible && api && api.getLogContents && !logLoaded && !logCleared) {
+        api.getLogContents().then(result => {
             try {
-                const result = JSON.parse(raw);
                 liveLog.value = (result && result.text) ? result.text : "";
                 liveLog.scrollTop = liveLog.scrollHeight;
                 logLoaded = true;
@@ -141,17 +142,18 @@ clearLog.addEventListener("click", () => {
 
 document.getElementById("testLog").addEventListener("click", async () => {
     const message = "[hardware-helper] Test log message";
-    await window.logWrite(message);
+    if (api && api.logWrite) {
+        await api.logWrite(message);
+    }
     window.appendLiveLog(message);
 });
 
 selectImage.addEventListener("click", async () => {
-    if (!window.selectImageFile) {
+    if (!api || !api.selectImageFile) {
         flashStatus.textContent = "file picker unavailable";
         return;
     }
-    const raw = await window.selectImageFile();
-    const result = JSON.parse(raw);
+    const result = await api.selectImageFile();
     if (!result.success) {
         flashStatus.textContent = result.error || "file picker canceled";
         return;
@@ -162,7 +164,7 @@ selectImage.addEventListener("click", async () => {
 });
 
 flashBootloader.addEventListener("click", async () => {
-    if (!window.flashBootloader) {
+    if (!api || !api.flashBootloader) {
         flashStatus.textContent = "flash unavailable";
         return;
     }
@@ -171,8 +173,7 @@ flashBootloader.addEventListener("click", async () => {
     }
     setFlashRunning(true);
     flashProgress.value = 0;
-    const raw = await window.flashBootloader();
-    const result = JSON.parse(raw);
+    const result = await api.flashBootloader();
     if (!result.started) {
         setFlashRunning(false);
         flashStatus.textContent = result.error || "flash failed";
@@ -180,7 +181,7 @@ flashBootloader.addEventListener("click", async () => {
 });
 
 flashImage.addEventListener("click", async () => {
-    if (!window.flashImage) {
+    if (!api || !api.flashImage) {
         flashStatus.textContent = "flash unavailable";
         return;
     }
@@ -189,8 +190,7 @@ flashImage.addEventListener("click", async () => {
     }
     setFlashRunning(true);
     flashProgress.value = 0;
-    const raw = await window.flashImage(selectedImagePath);
-    const result = JSON.parse(raw);
+    const result = await api.flashImage(selectedImagePath);
     if (!result.started) {
         setFlashRunning(false);
         flashStatus.textContent = result.error || "flash failed";
@@ -198,7 +198,7 @@ flashImage.addEventListener("click", async () => {
 });
 
 if (installDriver) {
-    if (!window.installUsbDriver) {
+    if (!api || !api.installUsbDriver) {
         installDriver.style.display = "none";
     } else {
         installDriver.addEventListener("click", async () => {
@@ -206,8 +206,7 @@ if (installDriver) {
                 return;
             }
             setDriverInstallRunning(true);
-            const raw = await window.installUsbDriver(driverDeviceName);
-            const result = JSON.parse(raw);
+            const result = await api.installUsbDriver(driverDeviceName);
             if (!result.started) {
                 setDriverInstallRunning(false);
                 driverStatus.textContent = result.error || "driver install already in progress";
@@ -250,8 +249,8 @@ window.appendLiveLog = (line) => {
 
 window.addEventListener("load", () => {
     setTimeout(() => {
-        if (window.uiReady) {
-            window.uiReady();
+        if (api && api.uiReady) {
+            api.uiReady();
         }
     }, 0);
 });

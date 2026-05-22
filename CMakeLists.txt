@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
 
 project(hardware-helper LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -13,12 +13,12 @@ include(FetchContent)
 include(CheckCXXCompilerFlag)
 
 FetchContent_Declare(
-    webview
-    GIT_REPOSITORY https://github.com/webview/webview
-    GIT_TAG 0.12.0
+    saucer
+    GIT_REPOSITORY https://github.com/saucer/saucer
+    GIT_TAG v8.0.5
 )
 
-FetchContent_MakeAvailable(webview)
+FetchContent_MakeAvailable(saucer)
 
 FetchContent_Declare(
     reproc
@@ -45,7 +45,6 @@ target_sources(hardware-helper PRIVATE
     src/core/rkdeveloptool_runner.h
     src/core/logging.cpp
     src/core/logging.h
-    src/core/webview_bindings.cpp
     src/core/libusb-win32-helper.cpp
     src/core/libusb-win32-helper.h
     src/core/file_dialog.cpp
@@ -54,33 +53,15 @@ target_sources(hardware-helper PRIVATE
 )
 
 target_link_libraries(hardware-helper PRIVATE
-    webview::core
+    saucer::saucer
+    saucer::embedded
     reproc++
 )
 
-file(READ ${CMAKE_SOURCE_DIR}/src/ui/index.html UI_INDEX_HTML)
-file(READ ${CMAKE_SOURCE_DIR}/src/ui/app.css UI_APP_CSS)
-file(READ ${CMAKE_SOURCE_DIR}/src/ui/app.js UI_APP_JS)
-set(UI_INDEX_HTML "${UI_INDEX_HTML}")
-set(UI_APP_CSS "${UI_APP_CSS}")
-set(UI_APP_JS "${UI_APP_JS}")
-
-configure_file(
-    ${CMAKE_SOURCE_DIR}/cmake/ui_embed.h.in
-    ${CMAKE_BINARY_DIR}/generated/ui_embed.h
-    @ONLY
-)
-
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${CMAKE_SOURCE_DIR}/src/ui/index.html
-    ${CMAKE_SOURCE_DIR}/src/ui/app.css
-    ${CMAKE_SOURCE_DIR}/src/ui/app.js
-    ${CMAKE_SOURCE_DIR}/cmake/ui_embed.h.in
-)
+saucer_embed("${CMAKE_SOURCE_DIR}/src/ui" TARGET hardware-helper)
 
 target_include_directories(hardware-helper PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_BINARY_DIR}/generated
 )
 
 add_custom_command(TARGET hardware-helper POST_BUILD
