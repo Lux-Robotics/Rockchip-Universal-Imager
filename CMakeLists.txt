@@ -81,6 +81,36 @@ if(APPLE)
                 "using vtable = typename trait::vtable;"
                 mo_content
                 "${mo_content}")
+            string(REGEX REPLACE
+                "R[[:space:]]+operator\\(Args\\.\\.\\. args\\) noexcept\\(noex\\)[[:space:]]+requires\\(!is_const and !is_lvalue_only and[[:space:]]+!is_rvalue_only\\)[[:space:]]*\\{[^}]*\\}"
+                ""
+                mo_content
+                "${mo_content}")
+            string(REGEX REPLACE
+                "R[[:space:]]+operator\\(Args\\.\\.\\. args\\) const noexcept\\(noex\\)[[:space:]]+requires\\(is_const and !is_lvalue_only and !is_rvalue_only\\)[[:space:]]*\\{[^}]*\\}"
+                ""
+                mo_content
+                "${mo_content}")
+            string(REGEX REPLACE
+                "requires\\(!is_const and is_lvalue_only and[[:space:]]+!is_rvalue_only\\)"
+                "requires(!is_const and !is_rvalue_only)"
+                mo_content
+                "${mo_content}")
+            string(REGEX REPLACE
+                "requires\\(is_const and is_lvalue_only and[[:space:]]+!is_rvalue_only\\)"
+                "requires(is_const and !is_rvalue_only)"
+                mo_content
+                "${mo_content}")
+            string(REGEX REPLACE
+                "requires\\(!is_const and !is_lvalue_only[[:space:]]+and is_rvalue_only\\)"
+                "requires(!is_const and !is_lvalue_only)"
+                mo_content
+                "${mo_content}")
+            string(REGEX REPLACE
+                "requires\\(is_const and !is_lvalue_only and is_rvalue_only\\)"
+                "requires(is_const and !is_lvalue_only)"
+                mo_content
+                "${mo_content}")
             if(NOT mo_content STREQUAL mo_original)
                 file(WRITE "${functional_move_only}" "${mo_content}")
             endif()
