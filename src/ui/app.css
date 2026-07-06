@@ -8,3 +8,14 @@ body {
     align-items: center;
     justify-content: center;
 }
+
+/* Buttons like Erase eMMC set a strong inline background (red) to signal
+   danger; that inline color otherwise wins over the browser's default
+   disabled dimming, so a disabled button can still look fully clickable.
+   Force a clear greyed-out look regardless of inline styling. */
+button:disabled {
+    background: #3a3a3a !important;
+    color: #777 !important;
+    cursor: not-allowed;
+    opacity: 0.7;
+}

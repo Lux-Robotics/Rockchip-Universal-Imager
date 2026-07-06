@@ -6,12 +6,13 @@
 #include "core/file_dialog.h"
 #include "core/loader_map.h"
 #include "core/executable_path.h"
-#include "core/emmc_ram_map.h"
+#include "core/gpt_probe.h"
 
 #include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -48,7 +49,12 @@ struct OperationResult {
 struct StorageInfoResult {
     bool success = false;
     unsigned int emmc_gb = 0;
-    unsigned int ram_gb = 0;
+    std::string error;
+};
+
+struct UsedSpaceResult {
+    bool success = false;
+    double used_gb = 0.0;
     std::string error;
 };
 
@@ -84,8 +90,162 @@ std::atomic<unsigned int> g_last_detected_pid{0};
 std::shared_ptr<rkdev::RkdevTask> g_flash_task;
 std::mutex g_flash_mutex;
 
+// probe_loader_ready()/query_storage_info() are reached from three different
+// threads (the polling loop, flashBootloader's readiness pre-check, and the
+// getStorageInfo endpoint fired from JS after a flash completes) and
+// g_flash_running alone doesn't close every gap between them - there's a
+// TOCTOU window between polling's check-then-act and flashBootloader's
+// compare-exchange, and getStorageInfo isn't gated by it at all. Without
+// this, two threads can run rfi + regex parsing concurrently, which has been
+// observed to segfault (concurrent std::regex_search on the same static
+// regex object, inside parse_flash_size_mb). Serialize all of it.
+std::mutex g_rkdev_probe_mutex;
+
 void set_device_polling_enabled(bool enabled) {
     g_polling_enabled.store(enabled);
+}
+
+// rfi (Read Flash Info) only succeeds once a loader is actually running on
+// the device, and fails fast (no hang risk) when it isn't. That makes it a
+// reliable, cheap "is this device actually ready for flash/erase" probe -
+// far more reliable than parsing "Loader"/"Maskrom" text out of `ld`, which
+// we've observed can flip back to Maskrom within ~100ms of a real loader
+// session starting, seemingly faster than a subsequent `ld` call can catch.
+std::string run_rfi_output() {
+    std::string output;
+    std::mutex wait_mutex;
+    std::condition_variable wait_cv;
+    bool done = false;
+
+    auto task = rkdev::start_rkdeveloptool(
+        {"rfi"},
+        [&](const std::string& line) {
+            output += line + "\n";
+        },
+        [&](const rkdev::ProcessResult& proc_result) {
+            if (!proc_result.error_message.empty()) {
+                output += "Error: " + proc_result.error_message + "\n";
+            }
+            {
+                std::lock_guard<std::mutex> lock(wait_mutex);
+                done = true;
+            }
+            wait_cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(wait_mutex);
+        wait_cv.wait(lock, [&]() { return done; });
+    }
+    return output;
+}
+
+bool parse_flash_size_mb(const std::string& rfi_output, unsigned int& out_mb) {
+    static const std::regex flash_size_regex(R"(Flash Size:\s*(\d+)\s*MB)", std::regex::icase);
+    std::smatch match;
+    if (!std::regex_search(rfi_output, match, flash_size_regex) || match.size() < 2) {
+        return false;
+    }
+    try {
+        out_mb = static_cast<unsigned int>(std::stoul(match[1].str()));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_flash_size_sectors(const std::string& rfi_output, std::uint64_t& out_sectors) {
+    static const std::regex sectors_regex(R"(Flash Size:\s*(\d+)\s*Sectors)", std::regex::icase);
+    std::smatch match;
+    if (!std::regex_search(rfi_output, match, sectors_regex) || match.size() < 2) {
+        return false;
+    }
+    try {
+        out_sectors = std::stoull(match[1].str());
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool probe_loader_ready() {
+    std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
+    unsigned int unused_mb = 0;
+    return parse_flash_size_mb(run_rfi_output(), unused_mb);
+}
+
+StorageInfoResult query_storage_info() {
+    std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
+    StorageInfoResult result;
+    unsigned int flash_mb = 0;
+    if (!parse_flash_size_mb(run_rfi_output(), flash_mb)) {
+        // Most commonly: device is still in Maskrom (no loader downloaded
+        // yet), which doesn't implement this query.
+        result.error = "could not read eMMC size (connect the device first)";
+        return result;
+    }
+
+    // Reported sizes run a bit under the nominal SKU size (overprovisioning,
+    // IDBlock/GPT overhead); round to the nearest GB for display.
+    result.emmc_gb = (flash_mb + 512) / 1024;
+    result.success = true;
+    return result;
+}
+
+// Coarse "how much of this eMMC has data" estimate via binary search: probes
+// a small chunk at the midpoint of the current [lo, hi) range, and narrows
+// toward whichever side has the transition between "has content" and
+// "reads as a single uniform byte" (the erased/never-written pattern).
+// Assumes a simple two-region layout - real data clustered at the start,
+// unused space at the end - which holds for a freshly flashed device but
+// isn't a guarantee for a live, fragmented filesystem; that's an accepted
+// trade-off for a quick, coarse estimate rather than an exact figure.
+UsedSpaceResult calculate_used_space() {
+    UsedSpaceResult result;
+    std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
+
+    std::uint64_t total_sectors = 0;
+    if (!parse_flash_size_sectors(run_rfi_output(), total_sectors) || total_sectors == 0) {
+        result.error = "could not read eMMC size (connect the device first)";
+        return result;
+    }
+
+    constexpr std::uint64_t kPrecisionSectors = 204800; // 0.1 GB at 512 B/sector
+    constexpr std::uint64_t kProbeSectors = 16;          // 8 KB per probe
+
+    const auto looks_blank = [](const std::vector<std::uint8_t>& buf) {
+        if (buf.empty()) {
+            return false;
+        }
+        const auto first = buf.front();
+        for (const auto b : buf) {
+            if (b != first) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    std::uint64_t lo = 0;
+    std::uint64_t hi = total_sectors;
+
+    while (hi - lo > kPrecisionSectors) {
+        const std::uint64_t mid = lo + (hi - lo) / 2;
+        const auto buf = hwhelper::read_sectors(mid, kProbeSectors);
+        // A failed read (e.g. probing past the device's real capacity) is
+        // treated as "has content" so the search leans conservative.
+        const bool blank = buf && looks_blank(*buf);
+        if (blank) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+
+    const std::uint64_t used_sectors = (lo + hi) / 2;
+    result.used_gb = static_cast<double>(used_sectors) * 512.0 / (1024.0 * 1024.0 * 1024.0);
+    result.success = true;
+    return result;
 }
 
 void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
@@ -96,9 +256,16 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
     std::weak_ptr<saucer::smartview> weak_view = view;
     g_polling_thread = std::thread([weak_view]() {
         std::string last_output;
+        std::string last_status;
 
         while (!g_polling_stop.load()) {
-            if (!g_polling_enabled.load()) {
+            // A flash/connect/erase task runs its own rkdeveloptool process
+            // against the same USB device; running a polling "ld" call at
+            // the same time races both processes for the device handle and
+            // can hang one of them holding it claimed, leaving the UI stuck
+            // (e.g. never observing the post-connect transition to Loader
+            // mode). Stand down entirely while a task owns the device.
+            if (!g_polling_enabled.load() || g_flash_running.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
@@ -155,27 +322,37 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
                 break;
             }
 
-            if (output != last_output) {
+            const bool present = output.find("DevNo=") != std::string::npos;
+            const bool tool_missing = output.find("not found next to the app") != std::string::npos;
+
+            // Maskrom is the initial ROM stage rkdeveloptool enumerates in;
+            // it can't do flash/eMMC operations until a loader is pushed to
+            // it (download_boot). Whether `ld` prints "Maskrom" or "Loader"
+            // is not a reliable signal of that on its own - observed in
+            // practice to flip back to "Maskrom" within ~100ms of a loader
+            // session actually starting, faster than the next `ld` poll can
+            // catch. Probe readiness directly instead: rfi only succeeds
+            // once a loader is actually servicing requests, and fails fast
+            // otherwise, so it doubles as a safe "has this device already
+            // been connected" check for auto-connecting on relaunch without
+            // ever needing to retry `db` (which can hang if attempted
+            // against a device that's already past Maskrom).
+            const bool is_ready = (present && !tool_missing) ? probe_loader_ready() : false;
+
+            std::string status;
+            if (tool_missing) {
+                status = "tool_missing";
+            } else if (present && is_ready) {
+                status = "connected";
+            } else if (present) {
+                status = "detected";
+            } else {
+                status = "disconnected";
+            }
+
+            if (output != last_output || status != last_status) {
                 last_output = output;
-                const bool present = output.find("DevNo=") != std::string::npos;
-                const bool tool_missing = output.find("not found next to the app") != std::string::npos;
-                // Maskrom is the initial ROM stage rkdeveloptool enumerates in;
-                // it can't do flash/eMMC operations until a loader is pushed
-                // to it (download_boot), after which the device re-enumerates
-                // as "Loader" mode. Surface these as distinct states so the UI
-                // can gate flashing/erase/storage-info behind an explicit
-                // "Connect" step rather than pretending Maskrom == ready.
-                const bool is_loader = output.find("Loader") != std::string::npos;
-                std::string status;
-                if (tool_missing) {
-                    status = "tool_missing";
-                } else if (present && is_loader) {
-                    status = "connected";
-                } else if (present) {
-                    status = "detected";
-                } else {
-                    status = "disconnected";
-                }
+                last_status = status;
                 const std::string info = output;
 
                 if (auto view = weak_view.lock()) {
@@ -190,7 +367,9 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
 }
 
 void append_live_log(const std::shared_ptr<saucer::smartview>& view, const std::string& line) {
-    logging::write("flash", line);
+    // Persistent-file logging for every rkdeveloptool call/response now
+    // happens centrally in RkdevTask::run(); this only mirrors lines into
+    // the in-app live-log panel.
     if (!g_webview_alive.load()) {
         return;
     }
@@ -306,59 +485,6 @@ bool cancel_flash_task() {
     return true;
 }
 
-StorageInfoResult query_storage_info() {
-    StorageInfoResult result;
-    std::string output;
-    std::mutex wait_mutex;
-    std::condition_variable wait_cv;
-    bool done = false;
-
-    auto task = rkdev::start_rkdeveloptool(
-        {"rfi"},
-        [&](const std::string& line) {
-            output += line + "\n";
-        },
-        [&](const rkdev::ProcessResult& proc_result) {
-            if (!proc_result.error_message.empty()) {
-                output += "Error: " + proc_result.error_message + "\n";
-            }
-            {
-                std::lock_guard<std::mutex> lock(wait_mutex);
-                done = true;
-            }
-            wait_cv.notify_one();
-        });
-
-    {
-        std::unique_lock<std::mutex> lock(wait_mutex);
-        wait_cv.wait(lock, [&]() { return done; });
-    }
-
-    static const std::regex flash_size_regex(R"(Flash Size:\s*(\d+)\s*MB)", std::regex::icase);
-    std::smatch match;
-    if (!std::regex_search(output, match, flash_size_regex) || match.size() < 2) {
-        // Most commonly: device is still in Maskrom (no loader downloaded
-        // yet), which doesn't implement this query.
-        result.error = "could not read eMMC size (connect the device first)";
-        return result;
-    }
-
-    try {
-        const unsigned int flash_mb = static_cast<unsigned int>(std::stoul(match[1].str()));
-        // Reported sizes run a bit under the nominal SKU size (overprovisioning,
-        // IDBlock/GPT overhead); round to nearest GB, then snap to the closest
-        // known SKU rather than requiring an exact match.
-        const unsigned int flash_gb = (flash_mb + 512) / 1024;
-        result.emmc_gb = flash_gb;
-        result.ram_gb = hwhelper::ram_gb_for_emmc(flash_gb);
-        result.success = true;
-    } catch (...) {
-        result.error = "failed to parse eMMC size";
-    }
-
-    return result;
-}
-
 bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const std::string& device_name) {
     bool expected = false;
     if (!g_driver_install_running.compare_exchange_strong(expected, true)) {
@@ -396,7 +522,7 @@ coco::stray run_app(saucer::application* app) {
     });
 
     webview->expose("logWrite", [](const std::string& message) {
-        logging::write(message);
+        logging::write("ui", message);
         return true;
     });
 
@@ -448,11 +574,39 @@ coco::stray run_app(saucer::application* app) {
         return FilePickResult{true, *path, ""};
     });
 
+    webview->expose("selectBackupDestination", []() {
+        std::string error;
+        auto path = pick_img_save_file(error);
+        if (!path) {
+            return FilePickResult{false, std::string(), error.empty() ? "file picker canceled" : error};
+        }
+        return FilePickResult{true, *path, ""};
+    });
+
     webview->expose("flashBootloader", [webview]() {
         const unsigned int vid = g_last_detected_vid.load();
         const unsigned int pid = g_last_detected_pid.load();
         if (vid == 0 || pid == 0) {
             return StartResult{false, "device VID/PID not detected"};
+        }
+
+        // A device that already has a loader running (bootloader flashed in
+        // a prior session, no power cycle since) can hang the `db` command
+        // if we retry it - Maskrom-only vendor requests don't get a proper
+        // response once the device is past that stage. Probe first and, if
+        // it's already ready, just confirm that instead of re-flashing.
+        bool expected = false;
+        if (!g_flash_running.compare_exchange_strong(expected, true)) {
+            return StartResult{false, "flash already in progress"};
+        }
+        const bool already_ready = probe_loader_ready();
+        g_flash_running.store(false);
+
+        if (already_ready) {
+            if (!start_flash_task(webview, {"rfi"})) {
+                return StartResult{false, "flash already in progress"};
+            }
+            return StartResult{true, ""};
         }
 
         std::string error;
@@ -495,6 +649,54 @@ coco::stray run_app(saucer::application* app) {
         return StartResult{true, ""};
     });
 
+    webview->expose("backupEmmc", [webview](const std::string& dest_path) {
+        if (dest_path.empty()) {
+            return StartResult{false, "no destination selected"};
+        }
+
+        bool expected = false;
+        if (!g_flash_running.compare_exchange_strong(expected, true)) {
+            return StartResult{false, "flash already in progress"};
+        }
+
+        std::uint64_t main_sectors = 0;
+        std::uint64_t total_sectors = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
+            if (const auto gpt = hwhelper::read_gpt_info()) {
+                main_sectors = gpt->last_used_lba + 1;
+            }
+            parse_flash_size_sectors(run_rfi_output(), total_sectors);
+        }
+        g_flash_running.store(false);
+
+        if (main_sectors == 0) {
+            if (total_sectors == 0) {
+                return StartResult{false, "could not determine eMMC size (connect the device first)"};
+            }
+            // No valid GPT found. Before falling back to a full dump, check
+            // whether there's any reason to - a device that's never been
+            // flashed (or was just erased) has nothing worth backing up.
+            bool appears_blank = false;
+            {
+                std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
+                appears_blank = hwhelper::probe_emmc_appears_blank(total_sectors);
+            }
+            if (appears_blank) {
+                return StartResult{false, "eMMC appears blank (no partition table found) - nothing to back up"};
+            }
+            // Has data, just not a GPT layout we recognize; dump everything
+            // rather than silently drop data we can't account for.
+            main_sectors = total_sectors;
+        }
+
+        if (!start_flash_task(webview, {"rl", "0", std::to_string(main_sectors), dest_path})) {
+            return StartResult{false, "flash already in progress"};
+        }
+
+        return StartResult{true, ""};
+    });
+
     webview->expose("cancelFlash", []() {
         if (!cancel_flash_task()) {
             return StartResult{false, "no flash in progress"};
@@ -504,6 +706,10 @@ coco::stray run_app(saucer::application* app) {
 
     webview->expose("getStorageInfo", []() {
         return query_storage_info();
+    });
+
+    webview->expose("calculateUsedSpace", []() {
+        return calculate_used_space();
     });
 
     window->set_title("Hardware Helper");

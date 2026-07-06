@@ -11,9 +11,18 @@
 #include <reproc++/reproc.hpp>
 
 #include "core/executable_path.h"
+#include "core/logging.h"
 
 namespace rkdev {
 namespace {
+
+std::string join_command(const std::vector<std::string>& args) {
+    std::string joined = "rkdeveloptool";
+    for (const auto& arg : args) {
+        joined += " " + arg;
+    }
+    return joined;
+}
 
 std::filesystem::path rkdeveloptool_path() {
     const auto base_dir = hwhelper::executable_dir();
@@ -89,7 +98,20 @@ RkdevTask::RkdevTask(std::vector<std::string> args,
 RkdevTask::~RkdevTask() {
     cancel();
     if (worker_.joinable()) {
-        worker_.join();
+        // The worker thread's lambda captures the owning shared_ptr by value
+        // (see start_rkdeveloptool), so that capture - and thus this object -
+        // can be destroyed on the worker thread itself, as its very last step,
+        // if that capture was the last remaining reference (e.g. g_flash_task
+        // was already reassigned to a new task while this one was finishing
+        // up). join() on your own thread throws std::system_error, which
+        // escapes this (implicitly noexcept) destructor and calls
+        // std::terminate - observed crashing exactly this way. Detach instead
+        // when that happens; the thread is already returning on its own.
+        if (worker_.get_id() == std::this_thread::get_id()) {
+            worker_.detach();
+        } else {
+            worker_.join();
+        }
     }
 }
 
@@ -120,6 +142,16 @@ void RkdevTask::run() {
     running_.store(true);
     ProcessResult result;
 
+    const std::string command = join_command(args_);
+    logging::write("rkdeveloptool", "> " + command);
+
+    auto logging_on_line = [this](const std::string& line) {
+        logging::write("rkdeveloptool", line);
+        if (on_line_) {
+            on_line_(line);
+        }
+    };
+
     try {
         const auto full_args = build_arguments(args_);
         reproc::options options;
@@ -137,7 +169,7 @@ void RkdevTask::run() {
         const auto sink = [&](reproc::stream, const uint8_t* data, size_t size) -> std::error_code {
             if (size > 0) {
                 buffer.append(reinterpret_cast<const char*>(data), size);
-                emit_lines(buffer, on_line_);
+                emit_lines(buffer, logging_on_line);
             }
             return {};
         };
@@ -147,9 +179,9 @@ void RkdevTask::run() {
             throw std::runtime_error("rkdeveloptool output read failed: " + drain_ec.message());
         }
 
-        emit_lines(buffer, on_line_);
-        if (!buffer.empty() && on_line_) {
-            on_line_(buffer);
+        emit_lines(buffer, logging_on_line);
+        if (!buffer.empty()) {
+            logging_on_line(buffer);
             buffer.clear();
         }
 
@@ -165,6 +197,15 @@ void RkdevTask::run() {
         result.was_cancelled = cancelled_.load();
         result.error_message = ex.what();
     }
+
+    std::string summary = "< " + command + " exit_code=" + std::to_string(result.exit_code);
+    if (result.was_cancelled) {
+        summary += " (cancelled)";
+    }
+    if (!result.error_message.empty()) {
+        summary += " error=\"" + result.error_message + "\"";
+    }
+    logging::write("rkdeveloptool", summary);
 
     set_result(result);
     running_.store(false);

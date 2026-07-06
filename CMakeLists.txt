@@ -157,8 +157,9 @@ target_sources(hardware-helper PRIVATE
     src/core/libusb-win32-helper.h
     src/core/file_dialog.cpp
     src/core/file_dialog.h
+    src/core/gpt_probe.cpp
+    src/core/gpt_probe.h
     src/core/loader_map.h
-    src/core/emmc_ram_map.h
 )
 
 target_link_libraries(hardware-helper PRIVATE

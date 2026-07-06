@@ -1,0 +1,3 @@
+00:30:59 	Error:libusb_claim_interface failed,err=-3
+00:32:48 	Error:RKU_DeviceRequest-->DeviceRequest vendor=0x471 failed, err=-1
+00:32:48 	<LAYER 1-1> ERROR:DownloadBoot-->Boot_VendorRequest471 failed,index(0)
