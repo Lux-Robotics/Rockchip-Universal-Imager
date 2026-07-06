@@ -158,6 +158,7 @@ target_sources(hardware-helper PRIVATE
     src/core/file_dialog.cpp
     src/core/file_dialog.h
     src/core/loader_map.h
+    src/core/emmc_ram_map.h
 )
 
 target_link_libraries(hardware-helper PRIVATE

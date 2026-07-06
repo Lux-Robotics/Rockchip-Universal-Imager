@@ -6,6 +6,7 @@
 #include "core/file_dialog.h"
 #include "core/loader_map.h"
 #include "core/executable_path.h"
+#include "core/emmc_ram_map.h"
 
 #include <atomic>
 #include <algorithm>
@@ -40,6 +41,14 @@ struct StartResult {
 
 struct OperationResult {
     bool success = false;
+    bool cancelled = false;
+    std::string error;
+};
+
+struct StorageInfoResult {
+    bool success = false;
+    unsigned int emmc_gb = 0;
+    unsigned int ram_gb = 0;
     std::string error;
 };
 
@@ -103,8 +112,8 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
                 {"ld"},
                 [&](const std::string& line) {
                     output += line + "\n";
-                    static const std::regex vid_regex("VID[:=]0x?([0-9A-Fa-f]{4})");
-                    static const std::regex pid_regex("PID[:=]0x?([0-9A-Fa-f]{4})");
+                    static const std::regex vid_regex("VID[:=]0x?([0-9A-Fa-f]{4})", std::regex::icase);
+                    static const std::regex pid_regex("PID[:=]0x?([0-9A-Fa-f]{4})", std::regex::icase);
                     std::smatch match;
                     if (std::regex_search(line, match, vid_regex) && match.size() >= 2) {
                         const auto hex = match[1].str();
@@ -148,9 +157,25 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
 
             if (output != last_output) {
                 last_output = output;
-                const bool connected = output.find("DevNo=") != std::string::npos;
+                const bool present = output.find("DevNo=") != std::string::npos;
                 const bool tool_missing = output.find("not found next to the app") != std::string::npos;
-                const std::string status = connected ? "connected" : (tool_missing ? "tool_missing" : "disconnected");
+                // Maskrom is the initial ROM stage rkdeveloptool enumerates in;
+                // it can't do flash/eMMC operations until a loader is pushed
+                // to it (download_boot), after which the device re-enumerates
+                // as "Loader" mode. Surface these as distinct states so the UI
+                // can gate flashing/erase/storage-info behind an explicit
+                // "Connect" step rather than pretending Maskrom == ready.
+                const bool is_loader = output.find("Loader") != std::string::npos;
+                std::string status;
+                if (tool_missing) {
+                    status = "tool_missing";
+                } else if (present && is_loader) {
+                    status = "connected";
+                } else if (present) {
+                    status = "detected";
+                } else {
+                    status = "disconnected";
+                }
                 const std::string info = output;
 
                 if (auto view = weak_view.lock()) {
@@ -200,9 +225,35 @@ std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned shor
     return std::nullopt;
 }
 
+// rkdeveloptool reports progress in two different shapes depending on the
+// operation: a direct "(NN%)" for Write LBA, or a "total N, current M" pair
+// for erase (no ready-made percentage). Handle both from one call site.
+std::optional<int> parse_progress_percent(const std::string& line) {
+    static const std::regex percent_regex("([0-9]{1,3})%");
+    static const std::regex ratio_regex(R"(total\s+(\d+)K?,\s*current\s+(\d+)K?)", std::regex::icase);
+    std::smatch match;
+    if (std::regex_search(line, match, percent_regex) && match.size() >= 2) {
+        try {
+            return std::clamp(std::stoi(match[1].str()), 0, 100);
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+    if (std::regex_search(line, match, ratio_regex) && match.size() >= 3) {
+        try {
+            const long long total = std::stoll(match[1].str());
+            const long long current = std::stoll(match[2].str());
+            if (total > 0) {
+                return std::clamp(static_cast<int>(current * 100 / total), 0, 100);
+            }
+        } catch (...) {
+        }
+    }
+    return std::nullopt;
+}
+
 bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
-                      const std::vector<std::string>& args,
-                      bool parse_progress) {
+                      const std::vector<std::string>& args) {
     bool expected = false;
     if (!g_flash_running.compare_exchange_strong(expected, true)) {
         return false;
@@ -213,16 +264,8 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
 
     auto on_line = [&](const std::string& line) {
         append_live_log(view, line);
-        if (parse_progress) {
-            static const std::regex progress_regex("([0-9]{1,3})%");
-            std::smatch match;
-            if (std::regex_search(line, match, progress_regex) && match.size() >= 2) {
-                try {
-                    const int percent = std::stoi(match[1].str());
-                    update_flash_progress(view, percent);
-                } catch (...) {
-                }
-            }
+        if (const auto percent = parse_progress_percent(line)) {
+            update_flash_progress(view, *percent);
         }
     };
 
@@ -231,14 +274,18 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
         if (!g_webview_alive.load()) {
             return;
         }
-        if (result.exit_code == 0 && result.error_message.empty() && !result.was_cancelled) {
+        const bool cancelled = result.was_cancelled;
+        const bool success = (result.exit_code == 0 && result.error_message.empty() && !cancelled);
+        if (success) {
             update_flash_progress(view, 100);
         }
-        const bool success = (result.exit_code == 0 && result.error_message.empty() && !result.was_cancelled);
-        const std::string error_text = result.error_message.empty() && !success
-            ? "rkdeveloptool failed with exit code " + std::to_string(result.exit_code)
-            : result.error_message;
-        const OperationResult payload{success, error_text};
+        std::string error_text;
+        if (!success && !cancelled) {
+            error_text = result.error_message.empty()
+                ? "rkdeveloptool failed with exit code " + std::to_string(result.exit_code)
+                : result.error_message;
+        }
+        const OperationResult payload{success, cancelled, error_text};
         view->execute("window.onFlashComplete && window.onFlashComplete({})", payload);
     };
 
@@ -248,6 +295,68 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
         g_flash_task = task;
     }
     return true;
+}
+
+bool cancel_flash_task() {
+    std::lock_guard<std::mutex> lock(g_flash_mutex);
+    if (!g_flash_task || !g_flash_running.load()) {
+        return false;
+    }
+    g_flash_task->cancel();
+    return true;
+}
+
+StorageInfoResult query_storage_info() {
+    StorageInfoResult result;
+    std::string output;
+    std::mutex wait_mutex;
+    std::condition_variable wait_cv;
+    bool done = false;
+
+    auto task = rkdev::start_rkdeveloptool(
+        {"rfi"},
+        [&](const std::string& line) {
+            output += line + "\n";
+        },
+        [&](const rkdev::ProcessResult& proc_result) {
+            if (!proc_result.error_message.empty()) {
+                output += "Error: " + proc_result.error_message + "\n";
+            }
+            {
+                std::lock_guard<std::mutex> lock(wait_mutex);
+                done = true;
+            }
+            wait_cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(wait_mutex);
+        wait_cv.wait(lock, [&]() { return done; });
+    }
+
+    static const std::regex flash_size_regex(R"(Flash Size:\s*(\d+)\s*MB)", std::regex::icase);
+    std::smatch match;
+    if (!std::regex_search(output, match, flash_size_regex) || match.size() < 2) {
+        // Most commonly: device is still in Maskrom (no loader downloaded
+        // yet), which doesn't implement this query.
+        result.error = "could not read eMMC size (connect the device first)";
+        return result;
+    }
+
+    try {
+        const unsigned int flash_mb = static_cast<unsigned int>(std::stoul(match[1].str()));
+        // Reported sizes run a bit under the nominal SKU size (overprovisioning,
+        // IDBlock/GPT overhead); round to nearest GB, then snap to the closest
+        // known SKU rather than requiring an exact match.
+        const unsigned int flash_gb = (flash_mb + 512) / 1024;
+        result.emmc_gb = flash_gb;
+        result.ram_gb = hwhelper::ram_gb_for_emmc(flash_gb);
+        result.success = true;
+    } catch (...) {
+        result.error = "failed to parse eMMC size";
+    }
+
+    return result;
 }
 
 bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const std::string& device_name) {
@@ -267,7 +376,7 @@ bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const 
             return;
         }
         if (auto view = weak_view.lock()) {
-            const OperationResult payload{result.success, result.error_message};
+            const OperationResult payload{result.success, false, result.error_message};
             view->execute("window.onDriverInstallComplete && window.onDriverInstallComplete({})", payload);
         }
     }).detach();
@@ -301,6 +410,19 @@ coco::stray run_app(saucer::application* app) {
 
     webview->expose("getLogContents", []() {
         return LogContentsResult{true, logging::read_all()};
+    });
+
+    // saucer's window.saucer.exposed is a JS Proxy that returns a callable
+    // stub for *any* property name regardless of whether it was actually
+    // registered here, so the frontend can't detect Windows-only endpoints
+    // (installUsbDriver/getUsbDriverInfo) by truthiness-checking them. Expose
+    // an explicit platform flag instead.
+    webview->expose("isWindowsPlatform", []() {
+#ifdef _WIN32
+        return true;
+#else
+        return false;
+#endif
     });
 
 #ifdef _WIN32
@@ -339,7 +461,7 @@ coco::stray run_app(saucer::application* app) {
             return StartResult{false, error};
         }
 
-        if (!start_flash_task(webview, {"db", *loader}, false)) {
+        if (!start_flash_task(webview, {"db", *loader})) {
             return StartResult{false, "flash already in progress"};
         }
 
@@ -359,11 +481,29 @@ coco::stray run_app(saucer::application* app) {
             return StartResult{false, "selected file does not exist"};
         }
 
-        if (!start_flash_task(webview, {"wl", "0", image_path}, true)) {
+        if (!start_flash_task(webview, {"wl", "0", image_path})) {
             return StartResult{false, "flash already in progress"};
         }
 
         return StartResult{true, ""};
+    });
+
+    webview->expose("eraseEmmc", [webview]() {
+        if (!start_flash_task(webview, {"ef"})) {
+            return StartResult{false, "flash already in progress"};
+        }
+        return StartResult{true, ""};
+    });
+
+    webview->expose("cancelFlash", []() {
+        if (!cancel_flash_task()) {
+            return StartResult{false, "no flash in progress"};
+        }
+        return StartResult{true, ""};
+    });
+
+    webview->expose("getStorageInfo", []() {
+        return query_storage_info();
     });
 
     window->set_title("Hardware Helper");
