@@ -5,6 +5,7 @@
 #include "core/libusb-win32-helper.h"
 #include "core/file_dialog.h"
 #include "core/loader_map.h"
+#include "core/executable_path.h"
 
 #include <atomic>
 #include <algorithm>
@@ -181,7 +182,7 @@ void update_flash_progress(const std::shared_ptr<saucer::smartview>& view, int p
 std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned short pid, std::string& error) {
     for (size_t i = 0; i < kLoaderMapSize; ++i) {
         if (kLoaderMap[i].vid == vid && kLoaderMap[i].pid == pid) {
-            const std::filesystem::path path = std::filesystem::current_path() / "loader_binaries" / kLoaderMap[i].filename;
+            const std::filesystem::path path = hwhelper::executable_dir() / "loader_binaries" / kLoaderMap[i].filename;
             if (!std::filesystem::exists(path)) {
                 error = "loader file not found: " + path.string();
                 return std::nullopt;

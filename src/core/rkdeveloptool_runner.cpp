@@ -10,11 +10,13 @@
 #include <reproc++/drain.hpp>
 #include <reproc++/reproc.hpp>
 
+#include "core/executable_path.h"
+
 namespace rkdev {
 namespace {
 
 std::filesystem::path rkdeveloptool_path() {
-    const auto base_dir = std::filesystem::current_path();
+    const auto base_dir = hwhelper::executable_dir();
 #if defined(_WIN32)
     const auto exe = base_dir / "rkdeveloptool.exe";
     if (std::filesystem::exists(exe)) {

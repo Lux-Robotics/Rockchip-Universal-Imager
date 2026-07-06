@@ -1,5 +1,6 @@
 #include "core/libusb-win32-helper.h"
 #include "core/logging.h"
+#include "core/executable_path.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -130,7 +131,7 @@ InstallResult run_elevated_install(const std::string& device_name) {
         params += quote_argument(utf8_to_wide(device_name));
     }
 
-    std::wstring working_dir = std::filesystem::current_path().wstring();
+    std::wstring working_dir = std::filesystem::path(exe_path).parent_path().wstring();
 
     SHELLEXECUTEINFOW sei{};
     sei.cbSize = sizeof(sei);
@@ -220,7 +221,7 @@ InstallResult perform_install(const std::string& device_name) {
         logging::write("driver", "Current driver: " + std::string(device->driver));
     }
 
-    const auto driver_dir = std::filesystem::current_path() / "driver";
+    const auto driver_dir = hwhelper::executable_dir() / "driver";
     std::filesystem::create_directories(driver_dir);
     const std::string driver_path = driver_dir.string();
     const std::string inf_name = "libusb-win32.inf";

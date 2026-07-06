@@ -7,13 +7,15 @@
 #include <sstream>
 #include <string>
 
+#include "core/executable_path.h"
+
 namespace logging {
 namespace {
 
 std::mutex g_mutex;
 
 std::filesystem::path log_dir() {
-    return std::filesystem::current_path() / "log";
+    return hwhelper::executable_dir() / "log";
 }
 
 std::string date_stamp() {

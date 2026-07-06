@@ -147,6 +147,8 @@ add_executable(hardware-helper WIN32)
 
 target_sources(hardware-helper PRIVATE
     src/main.cpp
+    src/core/executable_path.cpp
+    src/core/executable_path.h
     src/core/rkdeveloptool_runner.cpp
     src/core/rkdeveloptool_runner.h
     src/core/logging.cpp
