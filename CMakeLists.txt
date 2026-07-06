@@ -21,6 +21,21 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(saucer)
 
 if(APPLE)
+    # Idempotent substring replace: skips the edit if `replacement` (the fully
+    # patched form) is already present, so re-running configure against a
+    # persistent build dir (already-patched functional-src) can't re-apply a
+    # replacement whose output contains its own search text (e.g. adding a
+    # "typename" prefix) and double up the prefix.
+    function(_patch_replace_once out_var needle replacement input)
+        string(FIND "${input}" "${replacement}" already_idx)
+        if(already_idx EQUAL -1)
+            string(REPLACE "${needle}" "${replacement}" result "${input}")
+        else()
+            set(result "${input}")
+        endif()
+        set(${out_var} "${result}" PARENT_SCOPE)
+    endfunction()
+
     function(patch_saucer_functional)
         set(functional_base "${CMAKE_BINARY_DIR}/_deps/functional-src/include/std23/__functional_base.h")
         set(functional_move_only "${CMAKE_BINARY_DIR}/_deps/functional-src/include/std23/move_only_function.h")
@@ -28,20 +43,17 @@ if(APPLE)
         if(EXISTS "${functional_base}")
             file(READ "${functional_base}" base_content)
             set(base_original "${base_content}")
-            string(REPLACE
+            _patch_replace_once(base_content
                 "std::invoke_result_t<decltype(_select_param_type<T>)>::type"
-                "std::invoke_result_t<decltype(_select_param_type<T>)>"
-                base_content
+                "typename std::invoke_result_t<decltype(_select_param_type<T>)>::type"
                 "${base_content}")
-            string(REPLACE
+            _patch_replace_once(base_content
                 "_adapt_signature<Fp>::type"
                 "typename _adapt_signature<Fp>::type"
-                base_content
                 "${base_content}")
-            string(REPLACE
+            _patch_replace_once(base_content
                 "_drop_first_arg_to_invoke<F, T>::type"
                 "typename _drop_first_arg_to_invoke<F, T>::type"
-                base_content
                 "${base_content}")
             if(NOT base_content STREQUAL base_original)
                 file(WRITE "${functional_base}" "${base_content}")
@@ -51,35 +63,29 @@ if(APPLE)
         if(EXISTS "${functional_move_only}")
             file(READ "${functional_move_only}" mo_content)
             set(mo_original "${mo_content}")
-            string(REPLACE
+            _patch_replace_once(mo_content
                 "using Fp = quals<T>::type;"
                 "using Fp = typename quals<T>::type;"
-                mo_content
                 "${mo_content}")
-            string(REPLACE
+            _patch_replace_once(mo_content
                 "using D = std::unique_ptr<T>::deleter_type;"
                 "using D = typename std::unique_ptr<T>::deleter_type;"
-                mo_content
                 "${mo_content}")
-            string(REPLACE
+            _patch_replace_once(mo_content
                 "template<class T> using cv = signature::template cv<T>;"
                 "template<class T> using cv = typename signature::template cv<T>;"
-                mo_content
                 "${mo_content}")
-            string(REPLACE
+            _patch_replace_once(mo_content
                 "template<class T> using ref = signature::template ref<T>;"
                 "template<class T> using ref = typename signature::template ref<T>;"
-                mo_content
                 "${mo_content}")
-            string(REPLACE
+            _patch_replace_once(mo_content
                 "template<class T> using inv_quals = inv_quals_f<T>::type;"
                 "template<class T> using inv_quals = typename inv_quals_f<T>::type;"
-                mo_content
                 "${mo_content}")
-            string(REPLACE
+            _patch_replace_once(mo_content
                 "using vtable = trait::vtable;"
                 "using vtable = typename trait::vtable;"
-                mo_content
                 "${mo_content}")
             string(REGEX REPLACE
                 "R[[:space:]]+operator\\(Args\\.\\.\\. args\\) noexcept\\(noex\\)[[:space:]]+requires\\(!is_const and !is_lvalue_only and[[:space:]]+!is_rvalue_only\\)[[:space:]]*\\{[^}]*\\}"
@@ -362,6 +368,11 @@ if(RKDEV_ENABLE)
         set(RKDEV_BUILD_CMD ${RKDEV_BASH} -lc "export MSYSTEM=${RKDEV_MSYSTEM} && export PATH=${RKDEV_PATH_PREFIX}:$PATH && export PKG_CONFIG_PATH=${RKDEV_PKG_CONFIG_PATH} && export PKG_CONFIG_LIBDIR=${RKDEV_PKG_CONFIG_LIBDIR} && SRC_DIR=\$(cygpath -u '<SOURCE_DIR>') && PREFIX=\$(cygpath -u '${RKDEV_PREFIX}') && SCRIPT=\$(cygpath -u '${RKDEV_MSYS_SCRIPT}') && bash \"$SCRIPT\" \"$SRC_DIR\" \"$PREFIX\" \"${RKDEV_BINARY_NAME}\"")
         set(RKDEV_CONFIGURE_CMD ${CMAKE_COMMAND} -E echo "rkdeveloptool configure handled in build step")
         set(RKDEV_INSTALL_CMD ${CMAKE_COMMAND} -E echo "rkdeveloptool install handled in build step")
+    elseif(APPLE)
+        # Newer Apple Clang errors on VLA usage in main.cpp under rkdeveloptool's -Werror.
+        set(RKDEV_CONFIGURE_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && ./autogen.sh && ./configure --prefix=\"${RKDEV_PREFIX}\" CXXFLAGS=-Wno-vla-cxx-extension")
+        set(RKDEV_BUILD_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && make")
+        set(RKDEV_INSTALL_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && make install")
     else()
         set(RKDEV_CONFIGURE_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && ./autogen.sh && ./configure --prefix=\"${RKDEV_PREFIX}\"")
         set(RKDEV_BUILD_CMD /bin/sh -c "cd \"<SOURCE_DIR>\" && make")
