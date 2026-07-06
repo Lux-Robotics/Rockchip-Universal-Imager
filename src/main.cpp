@@ -303,12 +303,12 @@ coco::stray run_app(saucer::application* app) {
         return LogContentsResult{true, logging::read_all()};
     });
 
+#ifdef _WIN32
     webview->expose("getUsbDriverInfo", []() {
         const auto info = usb_driver::query_driver();
         return DriverInfoResult{info.device_found, info.is_libusb_win32, info.driver_name, info.error_message};
     });
 
-#ifdef _WIN32
     webview->expose("installUsbDriver", [webview](const std::string& device_name) {
         if (!start_driver_install(webview, device_name)) {
             return StartResult{false, "driver install already in progress"};

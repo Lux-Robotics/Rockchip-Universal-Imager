@@ -78,7 +78,8 @@ function setFlashRunning(running) {
 
 async function refreshDriverInfo() {
     if (!api || !api.getUsbDriverInfo) {
-        driverStatus.textContent = "driver info unavailable";
+        // libusb-win32/libwdi is a Windows-only concept; macOS and Linux use
+        // libusb directly, so there's nothing to report here.
         return;
     }
     const info = await api.getUsbDriverInfo();
@@ -208,6 +209,7 @@ flashImage.addEventListener("click", async () => {
 if (installDriver) {
     if (!api || !api.installUsbDriver) {
         installDriver.style.display = "none";
+        driverStatus.style.display = "none";
     } else {
         installDriver.addEventListener("click", async () => {
             if (driverInstallRunning) {

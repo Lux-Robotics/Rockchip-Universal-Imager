@@ -428,6 +428,15 @@ if(RKDEV_ENABLE)
                 COMMAND install_name_tool -change "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" ${RKDEV_DEST_BIN}
             )
         endif()
+        # install_name_tool rewrites load commands in place, which invalidates
+        # rkdeveloptool's existing code signature (ad-hoc or otherwise).
+        # macOS on Apple Silicon requires every executable to carry a valid
+        # signature to run at all, so re-sign (ad-hoc, since we have no
+        # Developer ID cert) after any binary mutation or the copied tool
+        # will be treated as tampered rather than merely unsigned.
+        list(APPEND RKDEV_COPY_COMMANDS
+            COMMAND codesign --force --sign - ${RKDEV_DEST_BIN}
+        )
         add_custom_command(
             OUTPUT ${RKDEV_COPY_OUTPUTS}
             ${RKDEV_COPY_COMMANDS}
