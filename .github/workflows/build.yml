@@ -73,10 +73,10 @@ jobs:
           name: MacOS_Ventura
           osx_arch: x86_64
 
-        # - os: macos-14
-        #   runs_on: MacOS_Ventura
-        #   name: macos-arm64
-        #   osx_arch: arm64
+        - os: macos-14
+          runs_on: [self-hosted, macOS, ARM64]
+          name: MacOS_arm64
+          osx_arch: arm64
 
     # Self-hosted runner configuration
     # Replace labels with your actual runner labels
