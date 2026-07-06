@@ -390,37 +390,62 @@ if(RKDEV_ENABLE)
         CONFIGURE_COMMAND ${RKDEV_CONFIGURE_CMD}
         BUILD_COMMAND ${RKDEV_BUILD_CMD}
         INSTALL_COMMAND ${RKDEV_INSTALL_CMD}
+        BUILD_BYPRODUCTS ${RKDEV_OUTPUT_BIN}
     )
 
-    add_dependencies(hardware-helper rkdeveloptool_ext)
+    # Tracked via add_custom_command(OUTPUT ...) + an ALL-target, rather than
+    # TARGET ... POST_BUILD: POST_BUILD commands only run when hardware-helper
+    # itself relinks, so an incremental build that touches no app sources
+    # (only rkdeveloptool_ext, or a stale/deleted copy in build/bin) would
+    # silently skip re-copying the binary. Depending on the destination path
+    # as a build OUTPUT makes Ninja re-run the copy whenever it's missing.
+    set(RKDEV_DEST_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
     if(WIN32)
-        add_custom_command(TARGET hardware-helper POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    ${RKDEV_PREFIX}/bin
-                    $<TARGET_FILE_DIR:hardware-helper>
+        set(RKDEV_DEST_BIN "${RKDEV_DEST_DIR}/${RKDEV_BINARY_NAME}")
+        add_custom_command(
+            OUTPUT ${RKDEV_DEST_BIN}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RKDEV_DEST_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${RKDEV_PREFIX}/bin ${RKDEV_DEST_DIR}
+            DEPENDS rkdeveloptool_ext
+            COMMENT "Copying rkdeveloptool to output directory"
         )
+        add_custom_target(rkdeveloptool_copy ALL DEPENDS ${RKDEV_DEST_BIN})
     elseif(APPLE)
-        add_custom_command(TARGET hardware-helper POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${RKDEV_OUTPUT_BIN}
-                    $<TARGET_FILE_DIR:hardware-helper>
+        set(RKDEV_DEST_BIN "${RKDEV_DEST_DIR}/${RKDEV_BINARY_NAME}")
+        set(RKDEV_COPY_OUTPUTS ${RKDEV_DEST_BIN})
+        set(RKDEV_COPY_COMMANDS
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RKDEV_DEST_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RKDEV_OUTPUT_BIN} ${RKDEV_DEST_DIR}
         )
         if(RKDEV_LIBUSB_DYLIB)
-            add_custom_command(TARGET hardware-helper POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${RKDEV_LIBUSB_DYLIB}
-                        $<TARGET_FILE_DIR:hardware-helper>
-                COMMAND install_name_tool -add_rpath "@executable_path" $<TARGET_FILE_DIR:hardware-helper>/${RKDEV_BINARY_NAME}
-                COMMAND install_name_tool -change "/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" $<TARGET_FILE_DIR:hardware-helper>/${RKDEV_BINARY_NAME}
-                COMMAND install_name_tool -change "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" $<TARGET_FILE_DIR:hardware-helper>/${RKDEV_BINARY_NAME}
+            get_filename_component(RKDEV_LIBUSB_DYLIB_NAME "${RKDEV_LIBUSB_DYLIB}" NAME)
+            list(APPEND RKDEV_COPY_OUTPUTS "${RKDEV_DEST_DIR}/${RKDEV_LIBUSB_DYLIB_NAME}")
+            list(APPEND RKDEV_COPY_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RKDEV_LIBUSB_DYLIB} ${RKDEV_DEST_DIR}
+                COMMAND install_name_tool -add_rpath "@executable_path" ${RKDEV_DEST_BIN}
+                COMMAND install_name_tool -change "/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" ${RKDEV_DEST_BIN}
+                COMMAND install_name_tool -change "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" ${RKDEV_DEST_BIN}
             )
         endif()
-    else()
-        add_custom_command(TARGET hardware-helper POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${RKDEV_OUTPUT_BIN}
-                    $<TARGET_FILE_DIR:hardware-helper>
+        add_custom_command(
+            OUTPUT ${RKDEV_COPY_OUTPUTS}
+            ${RKDEV_COPY_COMMANDS}
+            DEPENDS rkdeveloptool_ext
+            COMMENT "Copying rkdeveloptool to output directory"
         )
+        add_custom_target(rkdeveloptool_copy ALL DEPENDS ${RKDEV_COPY_OUTPUTS})
+    else()
+        set(RKDEV_DEST_BIN "${RKDEV_DEST_DIR}/${RKDEV_BINARY_NAME}")
+        add_custom_command(
+            OUTPUT ${RKDEV_DEST_BIN}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RKDEV_DEST_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RKDEV_OUTPUT_BIN} ${RKDEV_DEST_DIR}
+            DEPENDS rkdeveloptool_ext
+            COMMENT "Copying rkdeveloptool to output directory"
+        )
+        add_custom_target(rkdeveloptool_copy ALL DEPENDS ${RKDEV_DEST_BIN})
     endif()
+
+    add_dependencies(hardware-helper rkdeveloptool_copy)
 endif()

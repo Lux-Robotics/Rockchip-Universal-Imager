@@ -31,14 +31,22 @@ const api = window.saucer && window.saucer.exposed ? window.saucer.exposed : nul
 
 function render() {
     const connected = lastStatus === "connected";
-    statusDot.style.background = connected ? "#2fa84f" : "#a33";
-    statusText.textContent = lastStatus;
+    const toolMissing = lastStatus === "tool_missing";
+    statusDot.style.background = connected ? "#2fa84f" : (toolMissing ? "#d9822b" : "#a33");
+    statusText.textContent = toolMissing ? "rkdeveloptool not found" : lastStatus;
     flashBootloader.disabled = flashRunning || !connected;
     flashImage.disabled = flashRunning || !connected;
     if (connected) {
         const text = lastInfo.trim() || "device connected";
         deviceInfo.textContent = text;
         infoIcon.title = text;
+    } else if (toolMissing) {
+        const text = "rkdeveloptool is missing from the app folder — reinstall or repair the app.";
+        deviceInfo.textContent = text;
+        infoIcon.title = text;
+        if (!driverInstallRunning) {
+            driverStatus.textContent = "";
+        }
     } else {
         deviceInfo.textContent = "check usb";
         infoIcon.title = "check usb";

@@ -149,7 +149,8 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
             if (output != last_output) {
                 last_output = output;
                 const bool connected = output.find("DevNo=") != std::string::npos;
-                const std::string status = connected ? "connected" : "disconnected";
+                const bool tool_missing = output.find("not found next to the app") != std::string::npos;
+                const std::string status = connected ? "connected" : (tool_missing ? "tool_missing" : "disconnected");
                 const std::string info = output;
 
                 if (auto view = weak_view.lock()) {
