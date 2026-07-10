@@ -1,6 +1,6 @@
 ## Rockchip Universal Imager
 
-A cross-platform GUI app for flashing and backing up storage of any Rockhip SoC over USB.
+A cross-platform GUI app for imaging (flashing) and backing up storage of any Rockhip SoC over USB.
 
 Wraps RKDevelopTool to provide reliable USB .img flashing of eMMC, SD, SPI for the supported Rockchip SoCs:
 
@@ -30,6 +30,6 @@ Currently supports .img writting and .img reading.
 
 ## Known limitations:
 
-Only one device can be flashed at a time per-OS
+Only one device can be imaged at a time per-OS
 Currently only .img files are supported
 SD and SPI capacity cannot be easily detected
