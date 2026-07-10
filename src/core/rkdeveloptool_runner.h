@@ -20,6 +20,11 @@ struct ProcessResult {
 
 int run_rkdeveloptool(const std::vector<std::string>& args);
 
+// True if the rkdeveloptool binary is present next to the app. Cheap
+// filesystem check (no process spawn), used to distinguish "device present
+// but we can't talk to it" from a normal disconnect.
+bool tool_available();
+
 class RkdevTask : public std::enable_shared_from_this<RkdevTask> {
 public:
     using LineCallback = std::function<void(const std::string&)>;

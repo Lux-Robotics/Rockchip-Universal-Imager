@@ -165,10 +165,28 @@ target_sources(hardware-helper PRIVATE
     src/core/gpt_probe.h
     src/core/loader_map.h
     src/core/macos_quit_guard.h
+    src/core/single_instance.cpp
+    src/core/single_instance.h
+    src/core/usb_monitor.cpp
+    src/core/usb_monitor.h
 )
 
 if(APPLE)
-    target_sources(hardware-helper PRIVATE src/core/macos_quit_guard.mm)
+    target_sources(hardware-helper PRIVATE
+        src/core/macos_quit_guard.mm
+        src/core/single_instance_mac.mm
+    )
+endif()
+
+# libusb: used directly by the app for hotplug-based device detection
+# (usb_monitor.cpp). Windows is intentionally not wired up yet - it would need
+# a WM_DEVICECHANGE path since libusb has no hotplug support there.
+if(NOT WIN32)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+    target_include_directories(hardware-helper PRIVATE ${LIBUSB_INCLUDE_DIRS})
+    target_link_directories(hardware-helper PRIVATE ${LIBUSB_LIBRARY_DIRS})
+    target_link_libraries(hardware-helper PRIVATE ${LIBUSB_LIBRARIES})
 endif()
 
 target_link_libraries(hardware-helper PRIVATE

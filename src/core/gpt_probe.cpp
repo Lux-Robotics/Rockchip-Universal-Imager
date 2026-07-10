@@ -1,11 +1,13 @@
 #include "core/gpt_probe.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -18,6 +20,14 @@ namespace {
 constexpr std::uint64_t kGptHeaderSignature = 0x5452415020494645ULL; // "EFI PART", little-endian
 constexpr std::size_t kSectorSize = 512;
 constexpr std::size_t kGptProbeSectors = 34; // protective MBR + header + 32 sectors of entries
+
+// A cancelled operation elsewhere (e.g. Backup) can leave a stuck
+// rkdeveloptool process holding the USB device's interface claimed for a
+// while even after RkdevTask::cancel() escalates to SIGKILL, and the device
+// itself can be momentarily unresponsive after an aborted transfer. Bound
+// this so a wedged device can't hang read_sectors() (and everything waiting
+// behind it, e.g. find_used_sector_boundary()'s binary search) forever.
+constexpr auto kProbeTimeout = std::chrono::seconds(5);
 
 std::uint64_t read_le_u64(const std::vector<std::uint8_t>& buf, std::size_t offset) {
     std::uint64_t value = 0;
@@ -47,29 +57,43 @@ std::optional<std::vector<std::uint8_t>> read_sectors(std::uint64_t begin_sector
     const auto temp_path = std::filesystem::temp_directory_path() /
         ("hwhelper_sector_probe_" + std::to_string(probe_id.fetch_add(1)) + ".bin");
 
-    std::mutex wait_mutex;
-    std::condition_variable wait_cv;
-    bool done = false;
-    int exit_code = -1;
+    struct WaitState {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+        int exit_code = -1;
+    };
+    // Heap-allocated and captured by shared_ptr rather than by reference
+    // into this function's stack frame: if the wait below times out, this
+    // function returns (and its stack frame goes away) before the task's
+    // on_exit_ callback necessarily has, and that callback needs somewhere
+    // safe to still write when it eventually does fire.
+    auto state = std::make_shared<WaitState>();
 
     auto task = rkdev::start_rkdeveloptool(
         {"rl", std::to_string(begin_sector), std::to_string(count), temp_path.string()},
         [](const std::string&) {},
-        [&](const rkdev::ProcessResult& result) {
-            exit_code = result.exit_code;
-            {
-                std::lock_guard<std::mutex> lock(wait_mutex);
-                done = true;
-            }
-            wait_cv.notify_one();
+        [state](const rkdev::ProcessResult& result) {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->exit_code = result.exit_code;
+            state->done = true;
+            state->cv.notify_one();
         });
 
+    bool completed = false;
     {
-        std::unique_lock<std::mutex> lock(wait_mutex);
-        wait_cv.wait(lock, [&]() { return done; });
+        std::unique_lock<std::mutex> lock(state->mutex);
+        completed = state->cv.wait_for(lock, kProbeTimeout, [&] { return state->done; });
     }
 
-    if (exit_code != 0) {
+    if (!completed) {
+        task->cancel();
+        std::error_code remove_ec;
+        std::filesystem::remove(temp_path, remove_ec);
+        return std::nullopt;
+    }
+
+    if (state->exit_code != 0) {
         std::error_code remove_ec;
         std::filesystem::remove(temp_path, remove_ec);
         return std::nullopt;
@@ -182,6 +206,16 @@ std::uint64_t find_used_sector_boundary(std::uint64_t total_sectors) {
         } else {
             lo = mid;
         }
+    }
+
+    // lo only ever advances off 0 when a probe actually finds content. If it
+    // never did, no content was found anywhere above the precision floor -
+    // the device is effectively blank (e.g. straight after a Secure Erase),
+    // so report 0 rather than the midpoint of the final [0, hi] window, which
+    // would otherwise read out ~half the precision floor (~30 MB) as "used"
+    // on a genuinely empty device.
+    if (lo == 0) {
+        return 0;
     }
 
     return (lo + hi) / 2;

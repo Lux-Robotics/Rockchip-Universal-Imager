@@ -1,0 +1,5 @@
+build/
+out/
+embedded/
+.DS_Store
+compile_commands.json

@@ -53,37 +53,65 @@ void emit_lines(std::string& buffer,
         buffer.clear();
         return;
     }
+    // Progress bars (Read/Write LBA's "(NN%)") are redrawn in place with a
+    // bare \r and no trailing \n - splitting on \n alone means every
+    // intermediate percentage gets silently concatenated into one buffered
+    // string instead of reaching on_line as its own update, so a caller
+    // parsing "the first NN% in this line" only ever sees the first one
+    // (observed as progress reporting/logging "stuck" at 0%). Split on
+    // either.
     size_t pos = 0;
-    while ((pos = buffer.find('\n')) != std::string::npos) {
+    while ((pos = buffer.find_first_of("\r\n")) != std::string::npos) {
         std::string line = buffer.substr(0, pos);
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
         on_line(line);
-        buffer.erase(0, pos + 1);
+        std::size_t erase_len = pos + 1;
+        // Treat a \r\n pair as one separator rather than emitting an extra
+        // empty line for the \n half of it.
+        if (buffer[pos] == '\r' && pos + 1 < buffer.size() && buffer[pos + 1] == '\n') {
+            erase_len = pos + 2;
+        }
+        buffer.erase(0, erase_len);
     }
 }
 
 } // namespace
 
+bool tool_available() {
+    try {
+        rkdeveloptool_path();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 int run_rkdeveloptool(const std::vector<std::string>& args) {
     reproc::process process;
-    const auto full_args = build_arguments(args);
-    reproc::options options;
-    options.redirect.in.type = reproc::redirect::parent;
-    options.redirect.out.type = reproc::redirect::parent;
-    options.redirect.err.type = reproc::redirect::parent;
+    const std::string command = join_command(args);
+    logging::write("rkdeveloptool", "> " + command);
 
-    const auto ec = process.start(full_args, options);
-    if (ec) {
-        throw std::runtime_error("failed to launch rkdeveloptool: " + ec.message());
-    }
+    try {
+        const auto full_args = build_arguments(args);
+        reproc::options options;
+        options.redirect.in.type = reproc::redirect::parent;
+        options.redirect.out.type = reproc::redirect::parent;
+        options.redirect.err.type = reproc::redirect::parent;
 
-    auto [status, wait_ec] = process.wait(reproc::infinite);
-    if (wait_ec) {
-        throw std::runtime_error("rkdeveloptool wait failed: " + wait_ec.message());
+        const auto ec = process.start(full_args, options);
+        if (ec) {
+            throw std::runtime_error("failed to launch rkdeveloptool: " + ec.message());
+        }
+
+        auto [status, wait_ec] = process.wait(reproc::infinite);
+        if (wait_ec) {
+            throw std::runtime_error("rkdeveloptool wait failed: " + wait_ec.message());
+        }
+        logging::write("rkdeveloptool", "< " + command + " exit_code=" + std::to_string(status));
+        return status;
+    } catch (const std::exception& ex) {
+        logging::write("rkdeveloptool", "< " + command + " exit_code=-1 error=\"" + ex.what() + "\"");
+        throw;
     }
-    return status;
 }
 
 RkdevTask::RkdevTask(std::vector<std::string> args,
@@ -117,10 +145,16 @@ RkdevTask::~RkdevTask() {
 
 void RkdevTask::cancel() {
     cancelled_.store(true);
-    auto ec = process_.terminate();
-    if (ec) {
-        process_.kill();
-    }
+    // terminate() only confirms the SIGTERM was *sent* - not that the
+    // process actually exited. A process blocked inside a blocking libusb
+    // transfer can ignore SIGTERM (or not get around to handling it) and
+    // keep running, still holding the USB device's interface claimed -
+    // which then hangs every subsequent rkdeveloptool invocation that needs
+    // the same device (interface claims are exclusive). Always escalate to
+    // SIGKILL rather than only when the terminate() signal-send itself
+    // failed; there's no cleanup worth waiting for in this tool anyway.
+    process_.terminate();
+    process_.kill();
 }
 
 bool RkdevTask::running() const {

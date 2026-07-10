@@ -1,6 +1,6 @@
-let pollingEnabled = true;
 let lastInfo = "";
 let lastStatus = "disconnected";
+let lastSoc = "";
 let driverInstallRunning = false;
 let flashRunning = false;
 let selectedImagePath = "";
@@ -10,14 +10,14 @@ let logLoaded = false;
 let logCleared = false;
 let calculatingUsedSpace = false;
 let quitPromptShowing = false;
+let storageTargets = null;
 const driverDeviceName = "Rockchip Bootloader Device";
 
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
-const deviceInfo = document.getElementById("deviceInfo");
 const storageInfo = document.getElementById("storageInfo");
+const storageSelector = document.getElementById("storageSelector");
 const infoIcon = document.getElementById("infoIcon");
-const pollingToggle = document.getElementById("pollingToggle");
 const driverStatus = document.getElementById("driverStatus");
 const installDriver = document.getElementById("installDriver");
 const flashStatus = document.getElementById("flashStatus");
@@ -49,15 +49,103 @@ const api = window.saucer && window.saucer.exposed ? window.saucer.exposed : nul
 
 let currentOperation = null;
 
-function logAction(message) {
-    // logWrite already tags entries with the "ui" category server-side;
-    // only prefix here for the in-app live-log panel display.
-    if (api && api.logWrite) {
-        api.logWrite(message);
+function logAction(_message) {
+    // Intentionally a no-op: UI actions (button clicks, panel toggles, etc.)
+    // are no longer logged. The live-log panel mirrors the persistent log
+    // file, which records only app + rkdeveloptool activity. Meaningful
+    // context (backup destination, image path) still appears there via the
+    // logged rkdeveloptool command line. Kept as a stub so its many call
+    // sites don't each need removing.
+}
+
+function storageLabel(storage) {
+    switch (Number(storage)) {
+    case 1:
+        return "eMMC";
+    case 2:
+        return "SD card";
+    case 9:
+        return "SPI NOR";
+    default:
+        return "storage";
     }
-    if (window.appendLiveLog) {
-        window.appendLiveLog("[ui] " + message);
+}
+
+function storageBytesFromInfo(info) {
+    if (!info) {
+        return 0;
     }
+    return Number(info.storage_bytes || info.emmc_bytes || 0);
+}
+
+function storageInfoBaseText(storage, storageBytes) {
+    return storageLabel(storage) + ": " + Number(storageBytes || 0).toLocaleString() + " bytes";
+}
+
+function clearUsedSpaceSuffix() {
+    if (!storageInfo.textContent) {
+        return;
+    }
+    storageInfo.textContent = storageInfo.textContent.split("  ·  ")[0];
+}
+
+function availableStorageEntries(targets) {
+    if (!targets || !targets.success) {
+        return [];
+    }
+    const entries = [];
+    if (targets.emmc_available) {
+        entries.push({ value: 1, label: "eMMC" });
+    }
+    if (targets.sd_available) {
+        entries.push({ value: 2, label: "SD card" });
+    }
+    if (targets.spinor_available) {
+        entries.push({ value: 9, label: "SPI NOR" });
+    }
+    return entries;
+}
+
+function renderStorageSelector() {
+    if (!storageSelector) {
+        return;
+    }
+
+    const entries = availableStorageEntries(storageTargets);
+    const enabledValues = new Set(entries.map((entry) => String(entry.value)));
+
+    for (const option of storageSelector.options) {
+        const available = enabledValues.has(option.value);
+        option.disabled = !available;
+        option.title = available ? "" : "not detected";
+    }
+
+    const selected = storageTargets && storageTargets.selected_storage
+        ? String(storageTargets.selected_storage)
+        : storageSelector.value;
+    if (enabledValues.has(selected)) {
+        storageSelector.value = selected;
+    }
+    const noStorageDevices = !!(storageTargets && !storageTargets.success);
+    storageSelector.disabled = flashRunning || (lastStatus !== "connected" && !noStorageDevices);
+}
+
+async function refreshStorageTargets() {
+    if (!api || !api.getStorageTargets) {
+        return;
+    }
+    try {
+        const targets = await api.getStorageTargets();
+        storageTargets = targets || null;
+    } catch (error) {
+        storageTargets = null;
+    }
+    if (storageTargets && !storageTargets.success) {
+        flashStatus.textContent = "no storage devices detected";
+    } else if (flashStatus.textContent === "no storage devices detected") {
+        flashStatus.textContent = "";
+    }
+    renderStorageSelector();
 }
 
 function showConfirm(message) {
@@ -94,33 +182,57 @@ function render() {
     const connected = lastStatus === "connected";
     const detected = lastStatus === "detected";
     const toolMissing = lastStatus === "tool_missing";
+    const noStorageDevices = !!(storageTargets && !storageTargets.success);
     statusDot.style.background = connected ? "#2fa84f" : (detected ? "#2a6fd9" : (toolMissing ? "#d9822b" : "#a33"));
-    statusText.textContent = toolMissing ? "rkdeveloptool not found" : (detected ? "detected" : lastStatus);
-    flashImage.disabled = flashRunning || !connected || !selectedImagePath;
-    eraseEmmc.disabled = flashRunning || !connected;
-    secureEraseEmmc.disabled = flashRunning || !connected;
-    backupEmmc.disabled = flashRunning || !connected;
-    calculateUsed.disabled = flashRunning || !connected || calculatingUsedSpace;
-    connectDevice.style.display = detected ? "inline-block" : "none";
-    connectDevice.disabled = flashRunning;
+    const socSuffix = (lastSoc && (connected || detected)) ? " (" + lastSoc + ")" : "";
+    statusText.textContent = toolMissing ? "rkdeveloptool not found" : ((detected ? "detected" : lastStatus) + socSuffix);
+    flashImage.disabled = flashRunning || !connected || !selectedImagePath || noStorageDevices;
+    eraseEmmc.disabled = flashRunning || !connected || noStorageDevices;
+    secureEraseEmmc.disabled = flashRunning || !connected || noStorageDevices;
+    backupEmmc.disabled = flashRunning || !connected || noStorageDevices;
+    calculateUsed.disabled = flashRunning || !connected || calculatingUsedSpace || noStorageDevices;
+    connectDevice.style.display = (connected || detected) ? "inline-block" : "none";
+    connectDevice.textContent = connected ? "Disconnect" : "Connect";
+    connectDevice.style.background = connected ? "#a33" : "#2a6fd9";
+    connectDevice.disabled = flashRunning || noStorageDevices;
     cancelFlash.style.display = flashRunning ? "inline-block" : "none";
+    if (toggleAdvanced) {
+        toggleAdvanced.disabled = noStorageDevices;
+    }
+    if (toggleLog) {
+        toggleLog.disabled = noStorageDevices;
+    }
+    if (copyLog) {
+        copyLog.disabled = noStorageDevices;
+    }
+    if (clearLog) {
+        clearLog.disabled = noStorageDevices;
+    }
+    if (installDriver) {
+        installDriver.disabled = driverInstallRunning || noStorageDevices;
+    }
     if (connected || detected) {
-        const text = lastInfo.trim() || (connected ? "device connected" : "device detected — press Connect");
-        deviceInfo.textContent = text;
-        infoIcon.title = text;
+        const friendly = connected ? "device connected" : "device detected — press Connect";
+        infoIcon.title = lastInfo.trim() || friendly;
     } else if (toolMissing) {
-        const text = "rkdeveloptool is missing from the app folder — reinstall or repair the app.";
-        deviceInfo.textContent = text;
-        infoIcon.title = text;
+        infoIcon.title = "rkdeveloptool is missing from the app folder — reinstall or repair the app.";
         if (!driverInstallRunning) {
             driverStatus.textContent = "";
         }
     } else {
-        deviceInfo.textContent = "check usb";
         infoIcon.title = "check usb";
         if (!driverInstallRunning) {
             driverStatus.textContent = "";
         }
+    }
+    if (storageSelector) {
+        storageSelector.disabled = flashRunning || (lastStatus !== "connected" && !noStorageDevices);
+        if (storageTargets && storageTargets.selected_storage) {
+            storageSelector.value = String(storageTargets.selected_storage);
+        }
+    }
+    if (noStorageDevices && !flashRunning) {
+        flashStatus.textContent = "no storage devices detected";
     }
     if (!connected) {
         storageInfo.textContent = "";
@@ -207,12 +319,19 @@ async function refreshStorageInfo() {
     if (!api || !api.getStorageInfo) {
         return;
     }
-    const info = await api.getStorageInfo();
-    if (!info.success) {
-        storageInfo.textContent = info.error || "";
+    const selectedStorage = storageTargets && storageTargets.selected_storage
+        ? storageTargets.selected_storage
+        : (storageSelector ? Number(storageSelector.value) : 1);
+    if (selectedStorage !== 1 || !storageTargets || !storageTargets.success || !storageTargets.emmc_available) {
+        storageInfo.textContent = storageLabel(selectedStorage) + ": unknown";
         return;
     }
-    storageInfo.textContent = "eMMC: " + info.emmc_gb + " GB";
+    const info = await api.getStorageInfo();
+    if (!info.success) {
+        storageInfo.textContent = storageLabel(selectedStorage) + ": unknown";
+        return;
+    }
+    storageInfo.textContent = storageInfoBaseText(selectedStorage, storageBytesFromInfo(info));
 }
 
 window.updateDeviceStatus = (status) => {
@@ -221,7 +340,9 @@ window.updateDeviceStatus = (status) => {
     render();
     if (changed && status === "connected") {
         refreshDriverInfo();
-        refreshStorageInfo();
+        setTimeout(() => {
+            refreshStorageTargets().then(refreshStorageInfo);
+        }, 0);
     }
 };
 
@@ -230,14 +351,10 @@ window.updateDeviceInfo = (info) => {
     render();
 };
 
-pollingToggle.addEventListener("click", async () => {
-    pollingEnabled = !pollingEnabled;
-    pollingToggle.textContent = pollingEnabled ? "Pause Polling" : "Resume Polling";
-    logAction("Polling " + (pollingEnabled ? "resumed" : "paused"));
-    if (api && api.setPollingEnabled) {
-        await api.setPollingEnabled(pollingEnabled);
-    }
-});
+window.updateDeviceSoc = (soc) => {
+    lastSoc = soc || "";
+    render();
+};
 
 toggleLog.addEventListener("click", () => {
     logVisible = !logVisible;
@@ -282,14 +399,6 @@ clearLog.addEventListener("click", () => {
     logAction("Cleared live log view");
 });
 
-document.getElementById("testLog").addEventListener("click", async () => {
-    const message = "[hardware-helper] Test log message";
-    if (api && api.logWrite) {
-        await api.logWrite(message);
-    }
-    window.appendLiveLog(message);
-});
-
 selectImage.addEventListener("click", async () => {
     logAction("Select .img clicked");
     if (!api || !api.selectImageFile) {
@@ -331,23 +440,26 @@ flashImage.addEventListener("click", async () => {
 });
 
 connectDevice.addEventListener("click", async () => {
-    logAction("Connect clicked");
-    if (!api || !api.flashBootloader) {
-        flashStatus.textContent = "flash unavailable";
+    const disconnecting = lastStatus === "connected";
+    logAction((disconnecting ? "Disconnect" : "Connect") + " clicked");
+    if (!api || (disconnecting ? !api.disconnectDevice : !api.flashBootloader)) {
+        flashStatus.textContent = (disconnecting ? "disconnect" : "connect") + " unavailable";
         return;
     }
     if (flashRunning) {
         return;
     }
-    currentOperation = "connect";
+    currentOperation = disconnecting ? "disconnect" : "connect";
     setFlashRunning(true);
     flashProgress.value = 0;
-    startFlashAnimation("Connecting");
-    const result = await api.flashBootloader();
+    startFlashAnimation(disconnecting ? "Disconnecting" : "Connecting");
+    const result = disconnecting
+        ? await api.disconnectDevice()
+        : await api.flashBootloader();
     if (!result.started) {
         setFlashRunning(false);
-        flashStatus.textContent = result.error || "connect failed";
-        logAction("Connect failed to start: " + (result.error || "unknown error"));
+        flashStatus.textContent = result.error || (disconnecting ? "disconnect failed" : "connect failed");
+        logAction((disconnecting ? "Disconnect" : "Connect") + " failed to start: " + (result.error || "unknown error"));
     }
 });
 
@@ -474,11 +586,36 @@ calculateUsed.addEventListener("click", async () => {
         render();
         return;
     }
-    const usedGb = result.used_gb.toFixed(1);
-    storageInfo.textContent = baseText + "  ·  Used: ~" + usedGb + " GB";
-    logAction("Calculated used space: ~" + usedGb + " GB");
+    const usedBytes = result.used_bytes.toLocaleString();
+    storageInfo.textContent = baseText + "  ·  Used: " + usedBytes + " bytes";
+    logAction("Calculated used space: " + usedBytes + " bytes");
     render();
 });
+
+if (storageSelector) {
+    storageSelector.addEventListener("change", async () => {
+        if (!api || !api.selectStorage) {
+            return;
+        }
+        const nextStorage = Number(storageSelector.value);
+        const previousStorage = storageTargets && storageTargets.selected_storage
+            ? String(storageTargets.selected_storage)
+            : storageSelector.value;
+        const result = await api.selectStorage(nextStorage);
+        if (!result.started) {
+            storageSelector.value = previousStorage;
+            flashStatus.textContent = result.error || "storage selection failed";
+            return;
+        }
+        if (storageTargets) {
+            storageTargets.selected_storage = nextStorage;
+        }
+        clearUsedSpaceSuffix();
+        calculatingUsedSpace = false;
+        await refreshStorageInfo();
+        render();
+    });
+}
 
 cancelFlash.addEventListener("click", async () => {
     logAction("Cancel clicked");
@@ -539,19 +676,20 @@ window.onFlashComplete = async (result) => {
     const label = operation === "erase" ? "Erase eMMC"
         : operation === "secure_erase" ? "Secure Erase"
         : operation === "connect" ? "Connect"
+        : operation === "disconnect" ? "Disconnect"
         : operation === "backup" ? "Backup eMMC"
         : "Flash Image";
 
     if (result && result.cancelled) {
+        flashProgress.value = 0;
         flashStatus.textContent = "Flash canceled";
-        logAction((operation || "Flash") + " canceled");
         await showAlert(label + " was canceled.");
         return;
     }
     if (!result || !result.success) {
+        flashProgress.value = 0;
         const error = (result && result.error) || "flash failed";
         flashStatus.textContent = error;
-        logAction((operation || "Flash") + " failed: " + error);
         await showAlert(label + " failed: " + error);
         return;
     }
@@ -562,6 +700,8 @@ window.onFlashComplete = async (result) => {
         // "flash" — the status dot turning green (once polling picks up
         // Loader mode) is the only feedback needed for a successful connect.
         flashStatus.textContent = "";
+    } else if (operation === "disconnect") {
+        flashStatus.textContent = "Disconnected";
     } else if (operation === "erase") {
         flashStatus.textContent = "Erase completed";
         await showAlert("Erase eMMC completed successfully.");
@@ -575,7 +715,11 @@ window.onFlashComplete = async (result) => {
         flashStatus.textContent = "Flash completed";
         await showAlert("Flash Image completed successfully.");
     }
-    refreshStorageInfo();
+    if (operation !== "disconnect" && lastStatus === "connected") {
+        setTimeout(() => {
+            refreshStorageTargets().then(refreshStorageInfo);
+        }, 0);
+    }
 };
 
 window.updateFlashProgress = (percent) => {

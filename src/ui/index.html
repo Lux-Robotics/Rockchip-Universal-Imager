@@ -16,8 +16,12 @@
             <div id="infoIcon" title="" style="margin-left:auto; width:20px; height:20px; border-radius:50%; border:1px solid #777; display:flex; align-items:center; justify-content:center; font-size:12px; color:#bbb;">i</div>
         </div>
 
-        <div id="deviceInfo" style="color:#bbb; white-space:pre-wrap; min-height:24px;">check usb</div>
         <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+            <select id="storageSelector" aria-label="Storage target" title="Select storage target" disabled>
+                <option value="1" title="not detected">eMMC</option>
+                <option value="2" title="not detected">SD card</option>
+                <option value="9" title="not detected">SPI NOR</option>
+            </select>
             <div id="storageInfo" style="color:#8cf; min-height:20px;"></div>
             <button id="calculateUsed" style="font-size:12px; padding:2px 8px;">Calculate Used Space</button>
         </div>
@@ -25,9 +29,6 @@
         <div id="flashStatus" style="color:#bbb; margin-top:8px; min-height:20px;"></div>
 
         <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
-            <button id="pollingToggle">Pause Polling</button>
-            <button id="testLog">Test Log</button>
-            <button id="toggleLog">Show Log</button>
             <button id="installDriver" data-platform="win">Install libusb-win32</button>
         </div>
 
@@ -45,12 +46,13 @@
             <progress id="flashProgress" max="100" value="0" style="width:100%;"></progress>
         </div>
 
-        <div style="margin-top:16px;">
+        <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
             <button id="toggleAdvanced">Show Advanced Options</button>
+            <button id="toggleLog">Show Log</button>
         </div>
         <div id="advancedPanel" style="display:none; margin-top:12px; padding:12px; border:1px solid #444; border-radius:8px;">
-            <div style="color:#888; font-size:13px; margin-bottom:8px;">
-                Secure Erase overwrites the entire eMMC with zeros. Unlike Quick Erase (which only issues the
+            <div id="secureEraseDescription" style="color:#888; font-size:13px; margin-bottom:8px;">
+                Secure Erase overwrites the entire selected storage target with zeros. Unlike Quick Erase (which only issues the
                 device's native erase command and isn't guaranteed to destroy data on all hardware), this
                 physically overwrites every sector - but takes significantly longer.
             </div>
