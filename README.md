@@ -1,4 +1,4 @@
-## Rockchip Universal Flasher
+## Rockchip Universal Imager
 
 A cross-platform GUI app for flashing and backing up storage of any Rockhip SoC over USB.
 
