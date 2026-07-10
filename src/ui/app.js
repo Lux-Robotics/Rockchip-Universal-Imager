@@ -5,9 +5,11 @@ let driverInstallRunning = false;
 let flashRunning = false;
 let selectedImagePath = "";
 let logVisible = false;
+let advancedVisible = false;
 let logLoaded = false;
 let logCleared = false;
 let calculatingUsedSpace = false;
+let quitPromptShowing = false;
 const driverDeviceName = "Rockchip Bootloader Device";
 
 const statusDot = document.getElementById("statusDot");
@@ -24,6 +26,9 @@ const connectDevice = document.getElementById("connectDevice");
 const selectImage = document.getElementById("selectImage");
 const flashImage = document.getElementById("flashImage");
 const eraseEmmc = document.getElementById("eraseEmmc");
+const secureEraseEmmc = document.getElementById("secureEraseEmmc");
+const toggleAdvanced = document.getElementById("toggleAdvanced");
+const advancedPanel = document.getElementById("advancedPanel");
 const backupEmmc = document.getElementById("backupEmmc");
 const calculateUsed = document.getElementById("calculateUsed");
 const cancelFlash = document.getElementById("cancelFlash");
@@ -93,6 +98,7 @@ function render() {
     statusText.textContent = toolMissing ? "rkdeveloptool not found" : (detected ? "detected" : lastStatus);
     flashImage.disabled = flashRunning || !connected || !selectedImagePath;
     eraseEmmc.disabled = flashRunning || !connected;
+    secureEraseEmmc.disabled = flashRunning || !connected;
     backupEmmc.disabled = flashRunning || !connected;
     calculateUsed.disabled = flashRunning || !connected || calculatingUsedSpace;
     connectDevice.style.display = detected ? "inline-block" : "none";
@@ -251,6 +257,13 @@ toggleLog.addEventListener("click", () => {
     }
 });
 
+toggleAdvanced.addEventListener("click", () => {
+    advancedVisible = !advancedVisible;
+    advancedPanel.style.display = advancedVisible ? "block" : "none";
+    toggleAdvanced.textContent = advancedVisible ? "Hide Advanced Options" : "Show Advanced Options";
+    logAction("Advanced options " + (advancedVisible ? "shown" : "hidden"));
+});
+
 copyLog.addEventListener("click", async () => {
     logAction("Copied log to clipboard");
     const text = liveLog.value || "";
@@ -290,7 +303,7 @@ selectImage.addEventListener("click", async () => {
         return;
     }
     selectedImagePath = result.path;
-    selectedImage.textContent = result.path;
+    selectedImage.textContent = result.path + " (" + result.size_bytes.toLocaleString() + " bytes)";
     flashStatus.textContent = "image selected";
     logAction("Selected image: " + result.path);
     render();
@@ -348,8 +361,9 @@ eraseEmmc.addEventListener("click", async () => {
         return;
     }
     const confirmed = await showConfirm(
-        "This will permanently erase all data on the device's eMMC storage, including the flashed OS. " +
-        "This cannot be undone. Continue?"
+        "This will erase the eMMC's partition table and flashed OS, leaving the device unbootable until " +
+        "reflashed. Note: this is not a guaranteed secure wipe - depending on the device, old data may " +
+        "still be physically recoverable afterward. Continue?"
     );
     logAction("Erase eMMC " + (confirmed ? "confirmed" : "canceled by user"));
     if (!confirmed) {
@@ -364,6 +378,37 @@ eraseEmmc.addEventListener("click", async () => {
         setFlashRunning(false);
         flashStatus.textContent = result.error || "erase failed";
         logAction("Erase eMMC failed to start: " + (result.error || "unknown error"));
+    }
+});
+
+secureEraseEmmc.addEventListener("click", async () => {
+    logAction("Secure Erase clicked");
+    if (!api || !api.secureEraseEmmc) {
+        flashStatus.textContent = "secure erase unavailable";
+        return;
+    }
+    if (flashRunning) {
+        return;
+    }
+    const confirmed = await showConfirm(
+        "This will overwrite the entire eMMC with zeros, physically destroying all data including the " +
+        "flashed OS. This takes significantly longer than Quick Erase (potentially 15-60+ minutes " +
+        "depending on device size and transfer speed) but is a real guarantee rather than relying on the " +
+        "device's own erase command. This cannot be undone. Continue?"
+    );
+    logAction("Secure Erase " + (confirmed ? "confirmed" : "canceled by user"));
+    if (!confirmed) {
+        return;
+    }
+    currentOperation = "secure_erase";
+    setFlashRunning(true);
+    flashProgress.value = 0;
+    startFlashAnimation("Secure erasing eMMC");
+    const result = await api.secureEraseEmmc();
+    if (!result.started) {
+        setFlashRunning(false);
+        flashStatus.textContent = result.error || "secure erase failed";
+        logAction("Secure Erase failed to start: " + (result.error || "unknown error"));
     }
 });
 
@@ -382,16 +427,28 @@ backupEmmc.addEventListener("click", async () => {
         return;
     }
     logAction("Backup destination: " + picked.path);
+
+    let result = await api.backupEmmc(picked.path, false);
+    if (!result.started && result.needs_confirmation) {
+        logAction("Backup size warning: " + result.message);
+        const confirmed = await showConfirm(result.message);
+        logAction("Backup size warning " + (confirmed ? "confirmed" : "declined"));
+        if (!confirmed) {
+            return;
+        }
+        result = await api.backupEmmc(picked.path, true);
+    }
+
+    if (!result.started) {
+        flashStatus.textContent = result.message || "backup failed";
+        logAction("Backup eMMC failed to start: " + (result.message || "unknown error"));
+        return;
+    }
+
     currentOperation = "backup";
     setFlashRunning(true);
     flashProgress.value = 0;
     startFlashAnimation("Backing up eMMC");
-    const result = await api.backupEmmc(picked.path);
-    if (!result.started) {
-        setFlashRunning(false);
-        flashStatus.textContent = result.error || "backup failed";
-        logAction("Backup eMMC failed to start: " + (result.error || "unknown error"));
-    }
 });
 
 calculateUsed.addEventListener("click", async () => {
@@ -480,6 +537,7 @@ window.onFlashComplete = async (result) => {
     setFlashRunning(false);
 
     const label = operation === "erase" ? "Erase eMMC"
+        : operation === "secure_erase" ? "Secure Erase"
         : operation === "connect" ? "Connect"
         : operation === "backup" ? "Backup eMMC"
         : "Flash Image";
@@ -507,6 +565,9 @@ window.onFlashComplete = async (result) => {
     } else if (operation === "erase") {
         flashStatus.textContent = "Erase completed";
         await showAlert("Erase eMMC completed successfully.");
+    } else if (operation === "secure_erase") {
+        flashStatus.textContent = "Secure erase completed";
+        await showAlert("Secure Erase completed successfully - the entire eMMC has been overwritten with zeros.");
     } else if (operation === "backup") {
         flashStatus.textContent = "Backup completed";
         await showAlert("Backup eMMC completed successfully.");
@@ -522,6 +583,29 @@ window.updateFlashProgress = (percent) => {
     flashProgress.value = value;
     flashPercent = value;
     updateFlashStatusText();
+};
+
+window.onQuitDuringOperation = async () => {
+    // The native window won't actually close on its own while a flash/erase/
+    // backup is running (see window::event::close on the C++ side) - closing
+    // mid-operation can leave the eMMC half-written or the device stuck
+    // needing a reflash. Ask first; forceCloseWindow only fires if the user
+    // confirms, and re-closing at that point is allowed through.
+    if (quitPromptShowing) {
+        return;
+    }
+    quitPromptShowing = true;
+    try {
+        const ok = await showConfirm(
+            "A flash, erase, or backup is still in progress. Quitting now may leave the eMMC " +
+            "partially written or the device needing to be reflashed. Quit anyway?"
+        );
+        if (ok && api && api.forceCloseWindow) {
+            api.forceCloseWindow();
+        }
+    } finally {
+        quitPromptShowing = false;
+    }
 };
 
 window.appendLiveLog = (line) => {

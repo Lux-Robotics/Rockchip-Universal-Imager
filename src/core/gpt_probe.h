@@ -32,11 +32,16 @@ struct GptInfo {
 // found (e.g. device not ready, or a non-GPT layout).
 std::optional<GptInfo> read_gpt_info();
 
-// Best-effort check for "this eMMC has never been flashed / was just
-// erased": samples the GPT region plus a few points spread across the disk
-// and reports whether they're all a single uniform byte (the erased-flash
-// readback pattern). Only meaningful to call after read_gpt_info() finds no
-// valid GPT - a device with real data always has a non-uniform GPT region.
-bool probe_emmc_appears_blank(std::uint64_t total_sectors);
+// Coarse "how many sectors actually have content" estimate via binary
+// search: probes a small chunk at the midpoint of the current range and
+// narrows toward wherever the transition is between "has content" and
+// "reads as a single uniform byte" (the erased/never-written pattern).
+// Assumes a simple two-region layout - real data clustered at the start,
+// unused space at the end - which holds for a freshly flashed device but
+// isn't guaranteed for a live, fragmented filesystem; that's an accepted
+// trade-off for a fast, coarse estimate (converges to within ~0.1 GB in
+// roughly a dozen probes) rather than an exact figure. A result near zero
+// means the device is effectively blank.
+std::uint64_t find_used_sector_boundary(std::uint64_t total_sectors);
 
 } // namespace hwhelper

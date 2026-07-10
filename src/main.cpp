@@ -7,15 +7,18 @@
 #include "core/loader_map.h"
 #include "core/executable_path.h"
 #include "core/gpt_probe.h"
+#include "core/macos_quit_guard.h"
 
 #include <atomic>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -40,6 +43,15 @@ struct StartResult {
     std::string error;
 };
 
+struct BackupStartResult {
+    bool started = false;
+    // Set when no GPT was found and the caller hasn't already confirmed via
+    // `force` - `message` holds a human-readable prompt (mentions the size)
+    // rather than an error, since nothing has actually failed yet.
+    bool needs_confirmation = false;
+    std::string message;
+};
+
 struct OperationResult {
     bool success = false;
     bool cancelled = false;
@@ -62,6 +74,7 @@ struct FilePickResult {
     bool success = false;
     std::string path;
     std::string error;
+    std::uint64_t size_bytes = 0;
 };
 
 struct DriverInfoResult {
@@ -89,6 +102,19 @@ std::atomic<unsigned int> g_last_detected_vid{0};
 std::atomic<unsigned int> g_last_detected_pid{0};
 std::shared_ptr<rkdev::RkdevTask> g_flash_task;
 std::mutex g_flash_mutex;
+
+// Set false while a flash task's worker thread is alive, true again only
+// after its on_exit_ callback has fully returned (including whatever it last
+// touched on `webview`). Shutdown blocks on this rather than on
+// g_flash_running, which flips false as on_exit_'s *first* step - well
+// before it's done referencing the webview.
+std::atomic<bool> g_flash_task_finished{true};
+std::mutex g_flash_done_mutex;
+std::condition_variable g_flash_done_cv;
+std::atomic<bool> g_force_quit{false};
+
+std::mutex g_driver_install_mutex;
+std::thread g_driver_install_thread;
 
 // probe_loader_ready()/query_storage_info() are reached from three different
 // threads (the polling loop, flashBootloader's readiness pre-check, and the
@@ -140,14 +166,49 @@ std::string run_rfi_output() {
     return output;
 }
 
+// Plain string scanning rather than std::regex: parse_flash_size_mb is
+// reachable from many threads (polling, several exposed endpoints), and despite
+// every call site holding g_rkdev_probe_mutex, a std::regex-based version of
+// this function has been the reproducible site of two separate SIGSEGVs
+// inside libc++'s regex/memmove internals. Avoiding regex here removes that
+// risk outright rather than continuing to chase it.
+std::optional<std::string> extract_number_before_unit(const std::string& text, const std::string& label, const std::string& unit) {
+    std::size_t search_pos = 0;
+    while (true) {
+        const auto label_pos = text.find(label, search_pos);
+        if (label_pos == std::string::npos) {
+            return std::nullopt;
+        }
+        std::size_t pos = label_pos + label.size();
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
+            ++pos;
+        }
+        const std::size_t digits_start = pos;
+        while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+            ++pos;
+        }
+        if (pos == digits_start) {
+            search_pos = label_pos + label.size();
+            continue;
+        }
+        std::size_t unit_pos = pos;
+        while (unit_pos < text.size() && std::isspace(static_cast<unsigned char>(text[unit_pos]))) {
+            ++unit_pos;
+        }
+        if (text.compare(unit_pos, unit.size(), unit) == 0) {
+            return text.substr(digits_start, pos - digits_start);
+        }
+        search_pos = label_pos + label.size();
+    }
+}
+
 bool parse_flash_size_mb(const std::string& rfi_output, unsigned int& out_mb) {
-    static const std::regex flash_size_regex(R"(Flash Size:\s*(\d+)\s*MB)", std::regex::icase);
-    std::smatch match;
-    if (!std::regex_search(rfi_output, match, flash_size_regex) || match.size() < 2) {
+    const auto digits = extract_number_before_unit(rfi_output, "Flash Size:", "MB");
+    if (!digits) {
         return false;
     }
     try {
-        out_mb = static_cast<unsigned int>(std::stoul(match[1].str()));
+        out_mb = static_cast<unsigned int>(std::stoul(*digits));
         return true;
     } catch (...) {
         return false;
@@ -155,13 +216,12 @@ bool parse_flash_size_mb(const std::string& rfi_output, unsigned int& out_mb) {
 }
 
 bool parse_flash_size_sectors(const std::string& rfi_output, std::uint64_t& out_sectors) {
-    static const std::regex sectors_regex(R"(Flash Size:\s*(\d+)\s*Sectors)", std::regex::icase);
-    std::smatch match;
-    if (!std::regex_search(rfi_output, match, sectors_regex) || match.size() < 2) {
+    const auto digits = extract_number_before_unit(rfi_output, "Flash Size:", "Sectors");
+    if (!digits) {
         return false;
     }
     try {
-        out_sectors = std::stoull(match[1].str());
+        out_sectors = std::stoull(*digits);
         return true;
     } catch (...) {
         return false;
@@ -192,14 +252,6 @@ StorageInfoResult query_storage_info() {
     return result;
 }
 
-// Coarse "how much of this eMMC has data" estimate via binary search: probes
-// a small chunk at the midpoint of the current [lo, hi) range, and narrows
-// toward whichever side has the transition between "has content" and
-// "reads as a single uniform byte" (the erased/never-written pattern).
-// Assumes a simple two-region layout - real data clustered at the start,
-// unused space at the end - which holds for a freshly flashed device but
-// isn't a guarantee for a live, fragmented filesystem; that's an accepted
-// trade-off for a quick, coarse estimate rather than an exact figure.
 UsedSpaceResult calculate_used_space() {
     UsedSpaceResult result;
     std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
@@ -210,39 +262,7 @@ UsedSpaceResult calculate_used_space() {
         return result;
     }
 
-    constexpr std::uint64_t kPrecisionSectors = 204800; // 0.1 GB at 512 B/sector
-    constexpr std::uint64_t kProbeSectors = 16;          // 8 KB per probe
-
-    const auto looks_blank = [](const std::vector<std::uint8_t>& buf) {
-        if (buf.empty()) {
-            return false;
-        }
-        const auto first = buf.front();
-        for (const auto b : buf) {
-            if (b != first) {
-                return false;
-            }
-        }
-        return true;
-    };
-
-    std::uint64_t lo = 0;
-    std::uint64_t hi = total_sectors;
-
-    while (hi - lo > kPrecisionSectors) {
-        const std::uint64_t mid = lo + (hi - lo) / 2;
-        const auto buf = hwhelper::read_sectors(mid, kProbeSectors);
-        // A failed read (e.g. probing past the device's real capacity) is
-        // treated as "has content" so the search leans conservative.
-        const bool blank = buf && looks_blank(*buf);
-        if (blank) {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
-
-    const std::uint64_t used_sectors = (lo + hi) / 2;
+    const auto used_sectors = hwhelper::find_used_sector_boundary(total_sectors);
     result.used_gb = static_cast<double>(used_sectors) * 512.0 / (1024.0 * 1024.0 * 1024.0);
     result.success = true;
     return result;
@@ -437,6 +457,7 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
     if (!g_flash_running.compare_exchange_strong(expected, true)) {
         return false;
     }
+    g_flash_task_finished.store(false);
 
     update_flash_progress(view, 0);
     append_live_log(view, "Starting rkdeveloptool " + args.front());
@@ -450,22 +471,39 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
 
     auto on_exit = [&](const rkdev::ProcessResult& result) {
         g_flash_running.store(false);
-        if (!g_webview_alive.load()) {
-            return;
+        {
+            // Don't leave the last-completed task pinned in g_flash_task
+            // forever - nothing ever clears it otherwise, so it (and its
+            // captured lambdas/process handle) would just sit retained until
+            // the next flash operation overwrites it, or the app exits.
+            std::lock_guard<std::mutex> lock(g_flash_mutex);
+            g_flash_task.reset();
         }
-        const bool cancelled = result.was_cancelled;
-        const bool success = (result.exit_code == 0 && result.error_message.empty() && !cancelled);
-        if (success) {
-            update_flash_progress(view, 100);
+
+        if (g_webview_alive.load()) {
+            const bool cancelled = result.was_cancelled;
+            const bool success = (result.exit_code == 0 && result.error_message.empty() && !cancelled);
+            if (success) {
+                update_flash_progress(view, 100);
+            }
+            std::string error_text;
+            if (!success && !cancelled) {
+                error_text = result.error_message.empty()
+                    ? "rkdeveloptool failed with exit code " + std::to_string(result.exit_code)
+                    : result.error_message;
+            }
+            const OperationResult payload{success, cancelled, error_text};
+            view->execute("window.onFlashComplete && window.onFlashComplete({})", payload);
         }
-        std::string error_text;
-        if (!success && !cancelled) {
-            error_text = result.error_message.empty()
-                ? "rkdeveloptool failed with exit code " + std::to_string(result.exit_code)
-                : result.error_message;
+
+        // Signal completion last, after anything above that could still
+        // touch `view` - shutdown waits on this before letting the webview
+        // be destroyed.
+        {
+            std::lock_guard<std::mutex> lock(g_flash_done_mutex);
+            g_flash_task_finished.store(true);
         }
-        const OperationResult payload{success, cancelled, error_text};
-        view->execute("window.onFlashComplete && window.onFlashComplete({})", payload);
+        g_flash_done_cv.notify_all();
     };
 
     auto task = rkdev::start_rkdeveloptool(args, on_line, on_exit);
@@ -492,7 +530,7 @@ bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const 
     }
 
     std::weak_ptr<saucer::smartview> weak_view = view;
-    std::thread([weak_view, device_name]() {
+    std::thread worker([weak_view, device_name]() {
         usb_driver::InstallOptions options;
         options.device_name = device_name;
         const auto result = usb_driver::install_libusb_win32(options);
@@ -505,7 +543,16 @@ bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const 
             const OperationResult payload{result.success, false, result.error_message};
             view->execute("window.onDriverInstallComplete && window.onDriverInstallComplete({})", payload);
         }
-    }).detach();
+    });
+
+    // Tracked and joined at shutdown instead of detached: a detached
+    // install thread could still be mid-callback (touching `view`) after
+    // run_app tears the webview down on window close.
+    std::lock_guard<std::mutex> lock(g_driver_install_mutex);
+    if (g_driver_install_thread.joinable()) {
+        g_driver_install_thread.join();
+    }
+    g_driver_install_thread = std::move(worker);
 
     return true;
 }
@@ -571,7 +618,9 @@ coco::stray run_app(saucer::application* app) {
         if (!path) {
             return FilePickResult{false, std::string(), error.empty() ? "file picker canceled" : error};
         }
-        return FilePickResult{true, *path, ""};
+        std::error_code size_ec;
+        const auto size = std::filesystem::file_size(*path, size_ec);
+        return FilePickResult{true, *path, "", size_ec ? 0 : static_cast<std::uint64_t>(size)};
     });
 
     webview->expose("selectBackupDestination", []() {
@@ -649,14 +698,59 @@ coco::stray run_app(saucer::application* app) {
         return StartResult{true, ""};
     });
 
-    webview->expose("backupEmmc", [webview](const std::string& dest_path) {
+    webview->expose("secureEraseEmmc", [webview]() {
+        bool expected = false;
+        if (!g_flash_running.compare_exchange_strong(expected, true)) {
+            return StartResult{false, "flash already in progress"};
+        }
+        std::uint64_t total_sectors = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
+            parse_flash_size_sectors(run_rfi_output(), total_sectors);
+        }
+        g_flash_running.store(false);
+
+        if (total_sectors == 0) {
+            return StartResult{false, "could not determine eMMC size (connect the device first)"};
+        }
+
+        // Erase (ef) only issues the device's native erase command, which
+        // we've confirmed doesn't guarantee physically overwritten data on
+        // this hardware. The only reliable option is an actual overwrite:
+        // write zeros across the entire reported capacity via the same path
+        // as Flash Image. The source doesn't need to be a real ~30GB file on
+        // disk - a sparse file of that length reads back as zeros for any
+        // region never actually written, which is exactly what we want, at
+        // negligible real disk cost.
+        const auto zero_path = std::filesystem::temp_directory_path() / "hwhelper_secure_erase_zero.img";
+        std::error_code remove_ec;
+        std::filesystem::remove(zero_path, remove_ec);
+        {
+            std::ofstream create(zero_path, std::ios::binary | std::ios::trunc);
+            if (!create) {
+                return StartResult{false, "failed to prepare erase source file"};
+            }
+        }
+        std::error_code resize_ec;
+        std::filesystem::resize_file(zero_path, total_sectors * 512, resize_ec);
+        if (resize_ec) {
+            return StartResult{false, "failed to prepare erase source file: " + resize_ec.message()};
+        }
+
+        if (!start_flash_task(webview, {"wl", "0", zero_path.string()})) {
+            return StartResult{false, "flash already in progress"};
+        }
+        return StartResult{true, ""};
+    });
+
+    webview->expose("backupEmmc", [webview](const std::string& dest_path, bool force) {
         if (dest_path.empty()) {
-            return StartResult{false, "no destination selected"};
+            return BackupStartResult{false, false, "no destination selected"};
         }
 
         bool expected = false;
         if (!g_flash_running.compare_exchange_strong(expected, true)) {
-            return StartResult{false, "flash already in progress"};
+            return BackupStartResult{false, false, "flash already in progress"};
         }
 
         std::uint64_t main_sectors = 0;
@@ -672,29 +766,38 @@ coco::stray run_app(saucer::application* app) {
 
         if (main_sectors == 0) {
             if (total_sectors == 0) {
-                return StartResult{false, "could not determine eMMC size (connect the device first)"};
+                return BackupStartResult{false, false, "could not determine eMMC size (connect the device first)"};
             }
-            // No valid GPT found. Before falling back to a full dump, check
-            // whether there's any reason to - a device that's never been
-            // flashed (or was just erased) has nothing worth backing up.
-            bool appears_blank = false;
-            {
-                std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
-                appears_blank = hwhelper::probe_emmc_appears_blank(total_sectors);
+            // No valid GPT found, so there's no reliable boundary to trim
+            // against (content-scanning turned out not to read back
+            // uniformly-blank on unused/erased regions of this hardware,
+            // making it unreliable for actually deciding backup size) - most
+            // often because Erase eMMC issues a native eMMC erase command
+            // rather than actually zeroing sectors, and per the eMMC spec
+            // what a controller does with "erased" blocks afterward is
+            // implementation-defined; on this hardware they still read back
+            // as the previous OS's real bytes rather than a blank pattern.
+            // Rather than guess, ask before committing to a full-disk dump -
+            // and be explicit that a previous OS's data may still be in there.
+            if (!force) {
+                const double total_gb = static_cast<double>(total_sectors) * 512.0 / (1024.0 * 1024.0 * 1024.0);
+                char buf[320];
+                std::snprintf(buf, sizeof(buf),
+                    "No partition table was found on this eMMC, so it can't be trimmed precisely. "
+                    "If this device was previously flashed and erased, its old data may still be physically "
+                    "present and could be captured in this backup (erase does not guarantee a secure wipe). "
+                    "This will back up the entire %.1f GB device. Continue?",
+                    total_gb);
+                return BackupStartResult{false, true, std::string(buf)};
             }
-            if (appears_blank) {
-                return StartResult{false, "eMMC appears blank (no partition table found) - nothing to back up"};
-            }
-            // Has data, just not a GPT layout we recognize; dump everything
-            // rather than silently drop data we can't account for.
             main_sectors = total_sectors;
         }
 
         if (!start_flash_task(webview, {"rl", "0", std::to_string(main_sectors), dest_path})) {
-            return StartResult{false, "flash already in progress"};
+            return BackupStartResult{false, false, "flash already in progress"};
         }
 
-        return StartResult{true, ""};
+        return BackupStartResult{true, false, ""};
     });
 
     webview->expose("cancelFlash", []() {
@@ -702,6 +805,13 @@ coco::stray run_app(saucer::application* app) {
             return StartResult{false, "no flash in progress"};
         }
         return StartResult{true, ""};
+    });
+
+    webview->expose("forceCloseWindow", [window]() {
+        g_force_quit.store(true);
+        cancel_flash_task();
+        window->close();
+        return true;
     });
 
     webview->expose("getStorageInfo", []() {
@@ -712,6 +822,40 @@ coco::stray run_app(saucer::application* app) {
         return calculate_used_space();
     });
 
+    // Veto the native window close while a flash/erase/backup is running and
+    // ask the user to confirm in-app instead of letting the OS just tear the
+    // window (and the in-flight rkdeveloptool subprocess) down. Captures
+    // webview only as a weak_ptr: webview already holds a shared_ptr back to
+    // this window, so a strong capture here would form window -> listener ->
+    // webview -> window reference cycle that never gets collected.
+    std::weak_ptr<saucer::smartview> weak_webview_for_close = webview;
+    window->on<saucer::window::event::close>([weak_webview_for_close]() -> saucer::policy {
+        if (!g_flash_running.load() || g_force_quit.load()) {
+            return saucer::policy::allow;
+        }
+        if (g_webview_alive.load()) {
+            if (auto view = weak_webview_for_close.lock()) {
+                view->execute("window.onQuitDuringOperation && window.onQuitDuringOperation()");
+            }
+        }
+        return saucer::policy::block;
+    });
+
+#ifdef __APPLE__
+    // Cmd+Q / the app menu's Quit item never reach window::event::close (see
+    // macos_quit_guard.h) - cover that path separately, using the same
+    // g_flash_running/g_force_quit checks and the same JS-side prompt.
+    hwhelper::install_quit_guard(
+        [] { return g_flash_running.load() && !g_force_quit.load(); },
+        [weak_webview_for_close]() {
+            if (g_webview_alive.load()) {
+                if (auto view = weak_webview_for_close.lock()) {
+                    view->execute("window.onQuitDuringOperation && window.onQuitDuringOperation()");
+                }
+            }
+        });
+#endif
+
     window->set_title("Hardware Helper");
     window->set_size({.w = 800, .h = 600});
 
@@ -720,6 +864,31 @@ coco::stray run_app(saucer::application* app) {
     window->show();
 
     co_await app->finish();
+
+    // window::event::close already blocks a plain user-initiated close while
+    // a flash/erase/backup is running (see above), but this is a safety net
+    // for any other path that can end the app mid-operation. Cancel it and
+    // wait for its worker thread to fully finish - including on_exit_'s own
+    // use of `webview` - before webview/window are destroyed below.
+    std::shared_ptr<rkdev::RkdevTask> task_to_cancel;
+    {
+        std::lock_guard<std::mutex> lock(g_flash_mutex);
+        task_to_cancel = g_flash_task;
+    }
+    if (task_to_cancel && g_flash_running.load()) {
+        task_to_cancel->cancel();
+    }
+    {
+        std::unique_lock<std::mutex> lock(g_flash_done_mutex);
+        g_flash_done_cv.wait(lock, [] { return g_flash_task_finished.load(); });
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_driver_install_mutex);
+        if (g_driver_install_thread.joinable()) {
+            g_driver_install_thread.join();
+        }
+    }
 
     g_webview_alive.store(false);
     g_polling_stop.store(true);

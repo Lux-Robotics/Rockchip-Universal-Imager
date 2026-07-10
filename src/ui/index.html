@@ -36,13 +36,25 @@
             <button id="selectImage">Select .img</button>
             <button id="flashImage">Flash Image</button>
             <button id="backupEmmc">Backup eMMC</button>
-            <button id="eraseEmmc" style="background:#a33; color:white;">Erase eMMC</button>
+            <button id="eraseEmmc" style="background:#a33; color:white;">Quick Erase</button>
             <button id="cancelFlash" style="display:none; background:#a33; color:white;">Cancel</button>
         </div>
 
         <div id="selectedImage" style="color:#888; margin-top:8px; word-break:break-all;">No image selected</div>
         <div style="margin-top:8px;">
             <progress id="flashProgress" max="100" value="0" style="width:100%;"></progress>
+        </div>
+
+        <div style="margin-top:16px;">
+            <button id="toggleAdvanced">Show Advanced Options</button>
+        </div>
+        <div id="advancedPanel" style="display:none; margin-top:12px; padding:12px; border:1px solid #444; border-radius:8px;">
+            <div style="color:#888; font-size:13px; margin-bottom:8px;">
+                Secure Erase overwrites the entire eMMC with zeros. Unlike Quick Erase (which only issues the
+                device's native erase command and isn't guaranteed to destroy data on all hardware), this
+                physically overwrites every sector - but takes significantly longer.
+            </div>
+            <button id="secureEraseEmmc" style="background:#a33; color:white;">Secure Erase</button>
         </div>
 
         <div id="logPanel" style="display:none; margin-top:16px;">

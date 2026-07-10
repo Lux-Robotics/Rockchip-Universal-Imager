@@ -8,7 +8,6 @@
 #include <fstream>
 #include <mutex>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "core/rkdeveloptool_runner.h"
@@ -148,41 +147,44 @@ std::optional<GptInfo> read_gpt_info() {
     return info;
 }
 
-bool probe_emmc_appears_blank(std::uint64_t total_sectors) {
-    // Sample the GPT region plus a few points spread across the disk. A
-    // freshly-erased/never-flashed eMMC reads back as one uniform byte
-    // (0xFF or 0x00 depending on controller) everywhere; requiring the same
-    // byte across widely-separated samples - not just uniform within each -
-    // rules out the contrived case of only the GPT region having been wiped
-    // while real data remains elsewhere.
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> samples = {
-        {0, kGptProbeSectors},
-    };
-    if (total_sectors > kGptProbeSectors) {
-        for (double frac : {0.1, 0.5, 0.9}) {
-            const auto sector = static_cast<std::uint64_t>(static_cast<double>(total_sectors) * frac);
-            if (sector > kGptProbeSectors) {
-                samples.push_back({sector, 1});
-            }
+namespace {
+
+bool looks_blank(const std::vector<std::uint8_t>& buf) {
+    if (buf.empty()) {
+        return false;
+    }
+    const auto first = buf.front();
+    for (const auto b : buf) {
+        if (b != first) {
+            return false;
         }
     }
-
-    std::optional<std::uint8_t> uniform_byte;
-    for (const auto& [begin, count] : samples) {
-        const auto maybe_buf = read_sectors(begin, count);
-        if (!maybe_buf || maybe_buf->empty()) {
-            return false; // couldn't read; don't guess
-        }
-        for (const auto b : *maybe_buf) {
-            if (!uniform_byte) {
-                uniform_byte = b;
-            } else if (b != *uniform_byte) {
-                return false;
-            }
-        }
-    }
-
     return true;
+}
+
+} // namespace
+
+std::uint64_t find_used_sector_boundary(std::uint64_t total_sectors) {
+    constexpr std::uint64_t kPrecisionSectors = 204800; // 0.1 GB at 512 B/sector
+    constexpr std::uint64_t kProbeSectors = 16;          // 8 KB per probe
+
+    std::uint64_t lo = 0;
+    std::uint64_t hi = total_sectors;
+
+    while (hi - lo > kPrecisionSectors) {
+        const std::uint64_t mid = lo + (hi - lo) / 2;
+        const auto buf = read_sectors(mid, kProbeSectors);
+        // A failed read (e.g. probing past the device's real capacity) is
+        // treated as "has content" so the search leans conservative.
+        const bool blank = buf && looks_blank(*buf);
+        if (blank) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+
+    return (lo + hi) / 2;
 }
 
 } // namespace hwhelper

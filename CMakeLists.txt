@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.25)
 
 project(hardware-helper LANGUAGES C CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -160,7 +164,12 @@ target_sources(hardware-helper PRIVATE
     src/core/gpt_probe.cpp
     src/core/gpt_probe.h
     src/core/loader_map.h
+    src/core/macos_quit_guard.h
 )
+
+if(APPLE)
+    target_sources(hardware-helper PRIVATE src/core/macos_quit_guard.mm)
+endif()
 
 target_link_libraries(hardware-helper PRIVATE
     saucer::saucer
