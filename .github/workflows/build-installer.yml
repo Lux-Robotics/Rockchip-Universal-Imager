@@ -67,7 +67,7 @@ jobs:
         - name: Windows_x64_installer
           os: windows
           arch: x64
-          runs_on: [self-hosted, windows-11-x86]
+          runs_on: [self-hosted, Windows, X64]
           cpack_generator: NSIS
           vcvars: vcvars64.bat
           msystem: MINGW64
@@ -78,7 +78,7 @@ jobs:
         - name: Windows_arm64_installer
           os: windows
           arch: arm64
-          runs_on: [self-hosted, windows-11-x86]
+          runs_on: [self-hosted, Windows, X64]
           cpack_generator: NSIS
           # Everything is real arm64. App + libwdi cross-compile with the MSVC
           # x64->arm64 toolchain (vcvarsamd64_arm64); rkdeveloptool + its libusb
@@ -94,31 +94,25 @@ jobs:
           llvm_mingw_dir: C:/llvm-mingw
           cross_libusb_prefix: C:/libusb-arm64
 
-        # ---------- Linux ----------
+        # ---------- Linux (x64 only; no arm64 runner / no cross yet) ----------
         - name: Linux_x64_installer
           os: linux
           arch: x64
           runs_on: [self-hosted, Linux, X64]
           cpack_generator: DEB;RPM
 
-        - name: Linux_arm64_installer
-          os: linux
-          arch: arm64
-          runs_on: [self-hosted, Linux, ARM64]
-          cpack_generator: DEB;RPM
-
         # ---------- macOS (single Intel host; arm64 cross-compiles) ----------
         - name: MacOS_x86_64_installer
           os: macos
           arch: x86_64
-          runs_on: [self-hosted, macos-ventura-x86]
+          runs_on: [self-hosted, macOS, X64]
           cpack_generator: DragNDrop
           osx_arch: x86_64
 
         - name: MacOS_arm64_installer
           os: macos
           arch: arm64
-          runs_on: [self-hosted, macos-ventura-x86]
+          runs_on: [self-hosted, macOS, X64]
           cpack_generator: DragNDrop
           osx_arch: arm64
           cross: "true"
@@ -164,11 +158,14 @@ jobs:
       - name: Configure Linux
         if: matrix.os == 'linux'
         run: |
+          # saucer needs GCC >= 14; Ubuntu 24.04's default g++ is 13, so force
+          # g++-14 (apt install g++-14) rather than bypassing saucer's version
+          # check and hitting internal template-deduction failures.
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DRUI_PORTABLE=OFF \
+            -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14 \
             -DRKDEV_REPO=${{ env.RKDEV_REPO }} \
-            -DRKDEV_TAG=${{ env.RKDEV_TAG }} \
-            -Dsaucer_no_compiler_version_check=ON
+            -DRKDEV_TAG=${{ env.RKDEV_TAG }}
 
       # When cross-building to arm64 on an Intel host, the host's Homebrew
       # libusb is x86_64 - useless for linking the arm64 app + rkdeveloptool
