@@ -99,27 +99,27 @@ if(APPLE)
                 "using vtable = typename trait::vtable;"
                 "${mo_content}")
             string(REGEX REPLACE
-                "R[[:space:]]+operator\\(Args\\.\\.\\. args\\) noexcept\\(noex\\)[[:space:]]+requires\\(!is_const and !is_lvalue_only and[[:space:]]+!is_rvalue_only\\)[[:space:]]*\\{[^}]*\\}"
+                "R[ \t\r\n]+operator\\(\\)\\(Args\\.\\.\\. args\\) noexcept\\(noex\\)[ \t\r\n]+requires\\(!is_const and !is_lvalue_only and[ \t\r\n]+!is_rvalue_only\\)[ \t\r\n]*\\{[^}]*\\}"
                 ""
                 mo_content
                 "${mo_content}")
             string(REGEX REPLACE
-                "R[[:space:]]+operator\\(Args\\.\\.\\. args\\) const noexcept\\(noex\\)[[:space:]]+requires\\(is_const and !is_lvalue_only and !is_rvalue_only\\)[[:space:]]*\\{[^}]*\\}"
+                "R[ \t\r\n]+operator\\(\\)\\(Args\\.\\.\\. args\\) const noexcept\\(noex\\)[ \t\r\n]+requires\\(is_const and !is_lvalue_only and !is_rvalue_only\\)[ \t\r\n]*\\{[^}]*\\}"
                 ""
                 mo_content
                 "${mo_content}")
             string(REGEX REPLACE
-                "requires\\(!is_const and is_lvalue_only and[[:space:]]+!is_rvalue_only\\)"
+                "requires\\(!is_const and is_lvalue_only and[ \t\r\n]+!is_rvalue_only\\)"
                 "requires(!is_const and !is_rvalue_only)"
                 mo_content
                 "${mo_content}")
             string(REGEX REPLACE
-                "requires\\(is_const and is_lvalue_only and[[:space:]]+!is_rvalue_only\\)"
+                "requires\\(is_const and is_lvalue_only and[ \t\r\n]+!is_rvalue_only\\)"
                 "requires(is_const and !is_rvalue_only)"
                 mo_content
                 "${mo_content}")
             string(REGEX REPLACE
-                "requires\\(!is_const and !is_lvalue_only[[:space:]]+and is_rvalue_only\\)"
+                "requires\\(!is_const and !is_lvalue_only[ \t\r\n]+and is_rvalue_only\\)"
                 "requires(!is_const and !is_lvalue_only)"
                 mo_content
                 "${mo_content}")
