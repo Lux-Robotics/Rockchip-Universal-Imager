@@ -1,5 +1,6 @@
 #include "core/rkdeveloptool_runner.h"
 
+#include <cctype>
 #include <filesystem>
 #include <mutex>
 #include <stdexcept>
@@ -25,18 +26,28 @@ std::string join_command(const std::vector<std::string>& args) {
 }
 
 std::filesystem::path rkdeveloptool_path() {
-    const auto base_dir = hwhelper::executable_dir();
+    // Search both the executable's own directory and the companion directory.
+    // On macOS these differ: the installed single .app carries rkdeveloptool
+    // inside Contents/MacOS (executable_dir), while the portable build ships
+    // it as a separate executable beside the .app (companion_dir). On Windows
+    // and Linux the two are the same directory. Checking both lets one build
+    // serve every packaging layout.
+    std::vector<std::filesystem::path> dirs;
+    dirs.push_back(rui::executable_dir());
+    if (const auto companion = rui::companion_dir(); companion != dirs.front()) {
+        dirs.push_back(companion);
+    }
+    for (const auto& dir : dirs) {
 #if defined(_WIN32)
-    const auto exe = base_dir / "rkdeveloptool.exe";
-    if (std::filesystem::exists(exe)) {
-        return exe;
-    }
+        if (const auto exe = dir / "rkdeveloptool.exe"; std::filesystem::exists(exe)) {
+            return exe;
+        }
 #endif
-    const auto bin = base_dir / "rkdeveloptool";
-    if (std::filesystem::exists(bin)) {
-        return bin;
+        if (const auto bin = dir / "rkdeveloptool"; std::filesystem::exists(bin)) {
+            return bin;
+        }
     }
-    throw std::runtime_error("rkdeveloptool not found next to the app");
+    throw std::runtime_error("rkdeveloptool not found beside the application");
 }
 
 std::vector<std::string> build_arguments(const std::vector<std::string>& args) {
@@ -74,6 +85,45 @@ void emit_lines(std::string& buffer,
     }
 }
 
+// rkdeveloptool redraws its progress line with ANSI cursor-movement escape
+// sequences (ESC[1A ESC[2K) prefixed onto the reprinted text. They're
+// meaningless outside a terminal and turn into garbage in the log file and
+// live-log panel, so drop every CSI sequence before logging.
+std::string strip_ansi_escapes(const std::string& line) {
+    if (line.find('\x1B') == std::string::npos) {
+        return line;
+    }
+    std::string out;
+    out.reserve(line.size());
+    std::size_t i = 0;
+    while (i < line.size()) {
+        if (line[i] == '\x1B' && i + 1 < line.size() && line[i + 1] == '[') {
+            i += 2;
+            while (i < line.size() && !std::isalpha(static_cast<unsigned char>(line[i]))) {
+                ++i;
+            }
+            if (i < line.size()) {
+                ++i; // the final command letter itself
+            }
+        } else {
+            out += line[i++];
+        }
+    }
+    return out;
+}
+
+// Progress-style output that rkdeveloptool redraws in place with \r: either a
+// direct "(NN%)" or the erase path's "total N, current M" pair. These are the
+// lines that flood the log by the tens of thousands over a long flash, so
+// they're logged via write_progress (consecutive ones replace each other).
+bool is_progress_line(const std::string& line) {
+    if (line.find('%') != std::string::npos) {
+        return true;
+    }
+    return line.find("total") != std::string::npos &&
+           line.find("current") != std::string::npos;
+}
+
 } // namespace
 
 bool tool_available() {
@@ -82,35 +132,6 @@ bool tool_available() {
         return true;
     } catch (...) {
         return false;
-    }
-}
-
-int run_rkdeveloptool(const std::vector<std::string>& args) {
-    reproc::process process;
-    const std::string command = join_command(args);
-    logging::write("rkdeveloptool", "> " + command);
-
-    try {
-        const auto full_args = build_arguments(args);
-        reproc::options options;
-        options.redirect.in.type = reproc::redirect::parent;
-        options.redirect.out.type = reproc::redirect::parent;
-        options.redirect.err.type = reproc::redirect::parent;
-
-        const auto ec = process.start(full_args, options);
-        if (ec) {
-            throw std::runtime_error("failed to launch rkdeveloptool: " + ec.message());
-        }
-
-        auto [status, wait_ec] = process.wait(reproc::infinite);
-        if (wait_ec) {
-            throw std::runtime_error("rkdeveloptool wait failed: " + wait_ec.message());
-        }
-        logging::write("rkdeveloptool", "< " + command + " exit_code=" + std::to_string(status));
-        return status;
-    } catch (const std::exception& ex) {
-        logging::write("rkdeveloptool", "< " + command + " exit_code=-1 error=\"" + ex.what() + "\"");
-        throw;
     }
 }
 
@@ -145,6 +166,16 @@ RkdevTask::~RkdevTask() {
 
 void RkdevTask::cancel() {
     cancelled_.store(true);
+    // process_mutex_ makes this safe against run() concurrently calling
+    // process_.start(): without it, a cancel landing mid-start() would
+    // terminate()/kill() a half-initialized handle (reproc::process is not
+    // thread-safe). If start() hasn't happened yet, cancelled_ being set
+    // makes run() skip it entirely; if the process was already waited on,
+    // signaling again could hit a recycled pid, so skip that too.
+    std::lock_guard<std::mutex> lock(process_mutex_);
+    if (!process_started_ || process_reaped_) {
+        return;
+    }
     // terminate() only confirms the SIGTERM was *sent* - not that the
     // process actually exited. A process blocked inside a blocking libusb
     // transfer can ignore SIGTERM (or not get around to handling it) and
@@ -179,8 +210,13 @@ void RkdevTask::run() {
     const std::string command = join_command(args_);
     logging::write("rkdeveloptool", "> " + command);
 
-    auto logging_on_line = [this](const std::string& line) {
-        logging::write("rkdeveloptool", line);
+    auto logging_on_line = [this](const std::string& raw_line) {
+        const std::string line = strip_ansi_escapes(raw_line);
+        if (is_progress_line(line)) {
+            logging::write_progress("rkdeveloptool", line);
+        } else {
+            logging::write("rkdeveloptool", line);
+        }
         if (on_line_) {
             on_line_(line);
         }
@@ -193,9 +229,19 @@ void RkdevTask::run() {
         options.redirect.out.type = reproc::redirect::pipe;
         options.redirect.err.type = reproc::redirect::pipe;
 
-        const auto start_ec = process_.start(full_args, options);
-        if (start_ec) {
-            throw std::runtime_error("failed to launch rkdeveloptool: " + start_ec.message());
+        {
+            // Start under process_mutex_ so cancel() can never race the
+            // handle mid-initialization; a cancel that arrived before this
+            // point wins and the process is never launched at all.
+            std::lock_guard<std::mutex> lock(process_mutex_);
+            if (cancelled_.load()) {
+                throw std::runtime_error("cancelled before start");
+            }
+            const auto start_ec = process_.start(full_args, options);
+            if (start_ec) {
+                throw std::runtime_error("failed to launch rkdeveloptool: " + start_ec.message());
+            }
+            process_started_ = true;
         }
 
         std::string buffer;
@@ -220,6 +266,13 @@ void RkdevTask::run() {
         }
 
         auto [status, wait_ec] = process_.wait(reproc::infinite);
+        {
+            // The pid has been reaped - a cancel() arriving from here on must
+            // not signal it again (the pid could already belong to someone
+            // else).
+            std::lock_guard<std::mutex> lock(process_mutex_);
+            process_reaped_ = true;
+        }
         if (wait_ec) {
             throw std::runtime_error("rkdeveloptool wait failed: " + wait_ec.message());
         }

@@ -14,7 +14,7 @@
 
 #include "core/rkdeveloptool_runner.h"
 
-namespace hwhelper {
+namespace rui {
 namespace {
 
 constexpr std::uint64_t kGptHeaderSignature = 0x5452415020494645ULL; // "EFI PART", little-endian
@@ -55,7 +55,7 @@ bool is_all_zero(const std::vector<std::uint8_t>& buf, std::size_t offset, std::
 std::optional<std::vector<std::uint8_t>> read_sectors(std::uint64_t begin_sector, std::uint64_t count) {
     static std::atomic<int> probe_id{0};
     const auto temp_path = std::filesystem::temp_directory_path() /
-        ("hwhelper_sector_probe_" + std::to_string(probe_id.fetch_add(1)) + ".bin");
+        ("rui_sector_probe_" + std::to_string(probe_id.fetch_add(1)) + ".bin");
 
     struct WaitState {
         std::mutex mutex;
@@ -221,4 +221,4 @@ std::uint64_t find_used_sector_boundary(std::uint64_t total_sectors) {
     return (lo + hi) / 2;
 }
 
-} // namespace hwhelper
+} // namespace rui

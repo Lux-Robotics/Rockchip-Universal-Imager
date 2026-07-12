@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(hardware-helper LANGUAGES C CXX)
+project(rockchip-universal-imager LANGUAGES C CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -11,7 +11,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-option(HWHELPER_DISABLE_GPU "Disable GPU usage in embedded browser" ON)
+option(RUI_DISABLE_GPU "Disable GPU usage in embedded browser" ON)
+
+# Portable vs installer layout. ON: self-contained folder meant to be zipped
+# and run anywhere - ships a "portable" marker so the app logs to its own
+# folder, and on macOS keeps rkdeveloptool + libusb beside the .app as
+# separate executables. OFF (installer): no marker (logs go to the per-user OS
+# location) and on macOS the companions are sealed inside a single .app.
+option(RUI_PORTABLE "Build the portable (zip-and-run) layout instead of the installer layout" OFF)
 
 include(FetchContent)
 include(CheckCXXCompilerFlag)
@@ -147,9 +154,9 @@ if(TARGET reproc++ AND HAS_WCHANGES_MEANING)
     )
 endif()
 
-add_executable(hardware-helper WIN32)
+add_executable(rockchip-universal-imager WIN32)
 
-target_sources(hardware-helper PRIVATE
+target_sources(rockchip-universal-imager PRIVATE
     src/main.cpp
     src/core/executable_path.cpp
     src/core/executable_path.h
@@ -172,9 +179,27 @@ target_sources(hardware-helper PRIVATE
 )
 
 if(APPLE)
-    target_sources(hardware-helper PRIVATE
+    target_sources(rockchip-universal-imager PRIVATE
         src/core/macos_quit_guard.mm
         src/core/single_instance_mac.mm
+        src/core/macos_file_drop.h
+        src/core/macos_file_drop.mm
+    )
+
+    # A real .app bundle: double-clicking a bare Unix executable in Finder
+    # opens Terminal to run it; a bundle launches like a normal app (and is
+    # what codesign/notarization operate on). Its runtime companions are
+    # deliberately staged next to the .app, not sealed inside it.
+    set_target_properties(rockchip-universal-imager PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/packaging/macos/Info.plist"
+    )
+endif()
+
+if(UNIX AND NOT APPLE)
+    target_sources(rockchip-universal-imager PRIVATE
+        src/core/udev_rules_helper.cpp
+        src/core/udev_rules_helper.h
     )
 endif()
 
@@ -184,41 +209,50 @@ endif()
 if(NOT WIN32)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-    target_include_directories(hardware-helper PRIVATE ${LIBUSB_INCLUDE_DIRS})
-    target_link_directories(hardware-helper PRIVATE ${LIBUSB_LIBRARY_DIRS})
-    target_link_libraries(hardware-helper PRIVATE ${LIBUSB_LIBRARIES})
+    target_include_directories(rockchip-universal-imager PRIVATE ${LIBUSB_INCLUDE_DIRS})
+    target_link_directories(rockchip-universal-imager PRIVATE ${LIBUSB_LIBRARY_DIRS})
+    target_link_libraries(rockchip-universal-imager PRIVATE ${LIBUSB_LIBRARIES})
 endif()
 
-target_link_libraries(hardware-helper PRIVATE
+target_link_libraries(rockchip-universal-imager PRIVATE
     saucer::saucer
     saucer::embedded
     reproc++
 )
 
-saucer_embed("${CMAKE_SOURCE_DIR}/src/ui" TARGET hardware-helper)
+saucer_embed("${CMAKE_SOURCE_DIR}/src/ui" TARGET rockchip-universal-imager)
 
-target_include_directories(hardware-helper PRIVATE
+target_include_directories(rockchip-universal-imager PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
-add_custom_command(TARGET hardware-helper POST_BUILD
+# Loader .bin files are data, not code: inside the .app bundle they must go
+# to Contents/Resources (codesign refuses non-Mach-O files in Contents/MacOS);
+# elsewhere they sit next to the executable. resource_dir() mirrors this.
+if(APPLE)
+    set(RUI_LOADER_DEST "$<TARGET_FILE_DIR:rockchip-universal-imager>/../Resources/loader_binaries")
+else()
+    set(RUI_LOADER_DEST "$<TARGET_FILE_DIR:rockchip-universal-imager>/loader_binaries")
+endif()
+
+add_custom_command(TARGET rockchip-universal-imager POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/loader_binaries
-            $<TARGET_FILE_DIR:hardware-helper>/loader_binaries
+            ${RUI_LOADER_DEST}
 )
 
-if(TARGET hardware-helper)
-    target_compile_options(hardware-helper PRIVATE
+if(TARGET rockchip-universal-imager)
+    target_compile_options(rockchip-universal-imager PRIVATE
         $<$<AND:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>,$<BOOL:${HAS_WCHANGES_MEANING}>>:-Wno-error=changes-meaning>
         $<$<AND:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>,$<BOOL:${HAS_WCHANGES_MEANING}>>:-Wno-changes-meaning>
     )
-    if(HWHELPER_DISABLE_GPU)
-        target_compile_definitions(hardware-helper PRIVATE HWHELPER_DISABLE_GPU=1)
+    if(RUI_DISABLE_GPU)
+        target_compile_definitions(rockchip-universal-imager PRIVATE RUI_DISABLE_GPU=1)
     endif()
 endif()
 
 if(WIN32)
-    target_link_libraries(hardware-helper PRIVATE shell32)
+    target_link_libraries(rockchip-universal-imager PRIVATE shell32)
     option(LIBWDI_ENABLE "Build libwdi with native MSVC sources" ON)
     set(LIBWDI_REPO "https://github.com/pbatard/libwdi.git" CACHE STRING "libwdi repository URL")
     set(LIBWDI_TAG "v1.5.0" CACHE STRING "libwdi git tag or branch")
@@ -344,9 +378,9 @@ if(WIN32)
     endif()
 
     if(LIBWDI_INCLUDE_DIR AND LIBWDI_LIBRARY)
-        target_include_directories(hardware-helper PRIVATE ${LIBWDI_INCLUDE_DIR})
-        target_link_libraries(hardware-helper PRIVATE ${LIBWDI_LIBRARY})
-        target_compile_definitions(hardware-helper PRIVATE HAVE_LIBWDI=1)
+        target_include_directories(rockchip-universal-imager PRIVATE ${LIBWDI_INCLUDE_DIR})
+        target_link_libraries(rockchip-universal-imager PRIVATE ${LIBWDI_LIBRARY})
+        target_compile_definitions(rockchip-universal-imager PRIVATE HAVE_LIBWDI=1)
     else()
         message(WARNING "libwdi not found; USB driver install support will be disabled")
     endif()
@@ -368,8 +402,9 @@ set(RKDEV_PREFIX ${CMAKE_BINARY_DIR}/rkdeveloptool/install)
 set(RKDEV_SOURCE_DIR ${CMAKE_BINARY_DIR}/rkdeveloptool/src)
 set(RKDEV_OUTPUT_BIN ${RKDEV_PREFIX}/bin/${RKDEV_BINARY_NAME})
 set(RKDEV_MSYS_SCRIPT ${CMAKE_SOURCE_DIR}/cmake/rkdev_msys.sh)
-set(RKDEV_LIBUSB_DYLIB "")
-if(APPLE)
+set(RKDEV_LIBUSB_DYLIB "" CACHE FILEPATH
+    "Path to the libusb dylib shipped next to the macOS app bundle")
+if(APPLE AND NOT RKDEV_LIBUSB_DYLIB)
     foreach(candidate
             "/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib"
             "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib")
@@ -378,6 +413,16 @@ if(APPLE)
             break()
         endif()
     endforeach()
+endif()
+
+# The macOS distribution intentionally keeps both rkdeveloptool and libusb in
+# the directory containing rockchip-universal-imager.app. Do not silently build an app
+# that falls back to a developer-machine libusb installation when that
+# companion dylib cannot be packaged.
+if(APPLE AND RKDEV_ENABLE AND NOT EXISTS "${RKDEV_LIBUSB_DYLIB}")
+    message(FATAL_ERROR
+        "libusb-1.0.0.dylib was not found. Set RKDEV_LIBUSB_DYLIB to the dylib "
+        "that must be shipped next to rockchip-universal-imager.app.")
 endif()
 
 if(RKDEV_ENABLE)
@@ -416,6 +461,7 @@ if(RKDEV_ENABLE)
         UPDATE_COMMAND ""
         SOURCE_DIR ${RKDEV_SOURCE_DIR}
         BUILD_IN_SOURCE 1
+        PATCH_COMMAND ${CMAKE_COMMAND} -DRKDEV_MAIN=<SOURCE_DIR>/main.cpp -P ${CMAKE_SOURCE_DIR}/cmake/rkdev_patch.cmake
         CONFIGURE_COMMAND ${RKDEV_CONFIGURE_CMD}
         BUILD_COMMAND ${RKDEV_BUILD_CMD}
         INSTALL_COMMAND ${RKDEV_INSTALL_CMD}
@@ -423,11 +469,13 @@ if(RKDEV_ENABLE)
     )
 
     # Tracked via add_custom_command(OUTPUT ...) + an ALL-target, rather than
-    # TARGET ... POST_BUILD: POST_BUILD commands only run when hardware-helper
+    # TARGET ... POST_BUILD: POST_BUILD commands only run when rockchip-universal-imager
     # itself relinks, so an incremental build that touches no app sources
     # (only rkdeveloptool_ext, or a stale/deleted copy in build/bin) would
     # silently skip re-copying the binary. Depending on the destination path
     # as a build OUTPUT makes Ninja re-run the copy whenever it's missing.
+    # rkdeveloptool and libusb ship as external companions next to the
+    # bundle, so the .app does not silently carry stale fallback copies.
     set(RKDEV_DEST_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
     if(WIN32)
@@ -441,6 +489,24 @@ if(RKDEV_ENABLE)
         )
         add_custom_target(rkdeveloptool_copy ALL DEPENDS ${RKDEV_DEST_BIN})
     elseif(APPLE)
+        # Two layouts (see RUI_PORTABLE):
+        #  - Installer (OFF): rkdeveloptool + libusb are copied INSIDE the
+        #    bundle (Contents/MacOS) so the single .app is self-contained and
+        #    drag-installable. The app loads libusb from @executable_path
+        #    (same dir as the app binary).
+        #  - Portable (ON): they sit BESIDE the .app as separate executables,
+        #    the original external-companion layout. The app loads libusb from
+        #    three levels up (out of Contents/MacOS, back beside the bundle).
+        if(RUI_PORTABLE)
+            set(RKDEV_APP_LIBUSB_PATH "@executable_path/../../../libusb-1.0.0.dylib")
+        else()
+            # Contents/MacOS of the built bundle. Using a fixed path (rather
+            # than a $<TARGET_FILE_DIR> genex) keeps it usable as a custom
+            # command OUTPUT below.
+            set(RKDEV_DEST_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rockchip-universal-imager.app/Contents/MacOS")
+            set(RKDEV_APP_LIBUSB_PATH "@executable_path/libusb-1.0.0.dylib")
+        endif()
+
         set(RKDEV_DEST_BIN "${RKDEV_DEST_DIR}/${RKDEV_BINARY_NAME}")
         set(RKDEV_COPY_OUTPUTS ${RKDEV_DEST_BIN})
         set(RKDEV_COPY_COMMANDS
@@ -448,13 +514,18 @@ if(RKDEV_ENABLE)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RKDEV_OUTPUT_BIN} ${RKDEV_DEST_DIR}
         )
         if(RKDEV_LIBUSB_DYLIB)
-            get_filename_component(RKDEV_LIBUSB_DYLIB_NAME "${RKDEV_LIBUSB_DYLIB}" NAME)
-            list(APPEND RKDEV_COPY_OUTPUTS "${RKDEV_DEST_DIR}/${RKDEV_LIBUSB_DYLIB_NAME}")
+            # Keep the deployment name stable even if a caller supplies a
+            # versioned/symlinked source path through RKDEV_LIBUSB_DYLIB.
+            # libusb is copied right beside rkdeveloptool in both layouts, so
+            # its @executable_path rpath resolves either way.
+            set(RKDEV_LIBUSB_OUTPUT_NAME "libusb-1.0.0.dylib")
+            list(APPEND RKDEV_COPY_OUTPUTS "${RKDEV_DEST_DIR}/${RKDEV_LIBUSB_OUTPUT_NAME}")
             list(APPEND RKDEV_COPY_COMMANDS
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RKDEV_LIBUSB_DYLIB} ${RKDEV_DEST_DIR}
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RKDEV_LIBUSB_DYLIB} ${RKDEV_DEST_DIR}/${RKDEV_LIBUSB_OUTPUT_NAME}
                 COMMAND install_name_tool -add_rpath "@executable_path" ${RKDEV_DEST_BIN}
                 COMMAND install_name_tool -change "/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" ${RKDEV_DEST_BIN}
                 COMMAND install_name_tool -change "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib" "@rpath/libusb-1.0.0.dylib" ${RKDEV_DEST_BIN}
+                COMMAND codesign --force --sign - ${RKDEV_DEST_DIR}/${RKDEV_LIBUSB_OUTPUT_NAME}
             )
         endif()
         # install_name_tool rewrites load commands in place, which invalidates
@@ -473,6 +544,36 @@ if(RKDEV_ENABLE)
             COMMENT "Copying rkdeveloptool to output directory"
         )
         add_custom_target(rkdeveloptool_copy ALL DEPENDS ${RKDEV_COPY_OUTPUTS})
+
+        if(RUI_PORTABLE)
+            # Portable: keep runtime companions external, next to
+            # rockchip-universal-imager.app so they can also be used directly. Remove old
+            # in-bundle copies so an incremental build cannot mask a missing
+            # external dependency.
+            add_custom_command(TARGET rockchip-universal-imager POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E rm -f
+                        $<TARGET_FILE_DIR:rockchip-universal-imager>/rkdeveloptool
+                        $<TARGET_FILE_DIR:rockchip-universal-imager>/libusb-1.0.0.dylib
+                COMMENT "Keeping macOS runtime companions outside rockchip-universal-imager.app"
+            )
+        endif()
+        if(RKDEV_LIBUSB_DYLIB)
+            add_custom_command(TARGET rockchip-universal-imager POST_BUILD
+                COMMAND install_name_tool -change "/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib" "${RKDEV_APP_LIBUSB_PATH}" $<TARGET_FILE:rockchip-universal-imager>
+                COMMAND install_name_tool -change "/usr/local/opt/libusb/lib/libusb-1.0.0.dylib" "${RKDEV_APP_LIBUSB_PATH}" $<TARGET_FILE:rockchip-universal-imager>
+                COMMENT "Linking rockchip-universal-imager.app to its libusb"
+            )
+        endif()
+
+        # Ad-hoc sign the whole bundle as the last build step, after every
+        # install_name_tool/copy mutation (and the in-bundle companion copy)
+        # has landed. This satisfies Apple Silicon's every-executable-must-be-
+        # signed rule; it does NOT satisfy Gatekeeper for downloaded copies -
+        # that needs a Developer ID plus notarization.
+        add_custom_command(TARGET rockchip-universal-imager POST_BUILD
+            COMMAND codesign --force --sign - $<TARGET_BUNDLE_DIR:rockchip-universal-imager>
+            COMMENT "Ad-hoc signing rockchip-universal-imager.app"
+        )
     else()
         set(RKDEV_DEST_BIN "${RKDEV_DEST_DIR}/${RKDEV_BINARY_NAME}")
         add_custom_command(
@@ -485,5 +586,105 @@ if(RKDEV_ENABLE)
         add_custom_target(rkdeveloptool_copy ALL DEPENDS ${RKDEV_DEST_BIN})
     endif()
 
-    add_dependencies(hardware-helper rkdeveloptool_copy)
+    add_dependencies(rockchip-universal-imager rkdeveloptool_copy)
 endif()
+
+# ============================ Packaging (CPack) ============================
+# One uniform payload folder per platform; portable = that folder archived,
+# installer = that folder placed in the OS's proper directory. Each CI job
+# configures with its own -DRUI_PORTABLE and runs cpack with the matching
+# -G generator, so a single install tree feeds exactly one package format.
+#
+# NOTE: this packaging is wired for CI (build.yml's 12-job matrix) and has not
+# been produced/validated locally yet - treat first CI runs as the shakedown.
+set(RUI_BIN_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+
+if(APPLE)
+    # The .app carries the app binary, loaders (Contents/Resources), and - in
+    # the installer layout - the companions (Contents/MacOS), all built in
+    # place by the rules above, so installing the bundle captures them.
+    install(TARGETS rockchip-universal-imager BUNDLE DESTINATION .)
+    if(RUI_PORTABLE)
+        # Portable: rkdeveloptool + libusb ship beside the .app as separate
+        # executables (staged next to it in the build output).
+        install(PROGRAMS "${RUI_BIN_DIR}/rkdeveloptool" DESTINATION .)
+        if(RKDEV_LIBUSB_DYLIB)
+            install(FILES "${RUI_BIN_DIR}/libusb-1.0.0.dylib" DESTINATION .)
+        endif()
+    endif()
+elseif(WIN32)
+    # Flat folder: app.exe + rkdeveloptool.exe + loader_binaries/. WebView2 is
+    # an external runtime dependency (Evergreen), never bundled.
+    install(TARGETS rockchip-universal-imager RUNTIME DESTINATION .)
+    install(PROGRAMS "${RUI_BIN_DIR}/rkdeveloptool.exe" DESTINATION .)
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/loader_binaries" DESTINATION .)
+else()
+    # Linux: portable is a flat folder (like the others); the .deb/.rpm place
+    # that same folder under /opt and add a desktop entry + PATH symlink.
+    # webkit2gtk/gtk/libusb are declared package dependencies, never bundled.
+    if(RUI_PORTABLE)
+        set(RUI_APP_DEST ".")
+    else()
+        set(RUI_APP_DEST "opt/rockchip-universal-imager")
+    endif()
+    install(TARGETS rockchip-universal-imager RUNTIME DESTINATION "${RUI_APP_DEST}")
+    install(PROGRAMS "${RUI_BIN_DIR}/rkdeveloptool" DESTINATION "${RUI_APP_DEST}")
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/loader_binaries" DESTINATION "${RUI_APP_DEST}")
+    if(NOT RUI_PORTABLE)
+        # Absolute path under the "/" package prefix (not share/... which would
+        # land at /share/applications).
+        install(FILES "${CMAKE_SOURCE_DIR}/packaging/linux/rockchip-universal-imager.desktop"
+                DESTINATION usr/share/applications)
+        # PATH launcher: /usr/bin/rockchip-universal-imager -> /opt/rockchip-universal-imager/rockchip-universal-imager
+        install(CODE [[
+            file(MAKE_DIRECTORY "$ENV{DESTDIR}/usr/bin")
+            execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink
+                /opt/rockchip-universal-imager/rockchip-universal-imager
+                "$ENV{DESTDIR}/usr/bin/rockchip-universal-imager")
+        ]])
+    endif()
+endif()
+
+# The portable "portable" marker (empty file) tells the app to log to its own
+# folder (logging.cpp). Only the portable layout installs it.
+if(RUI_PORTABLE)
+    file(WRITE "${CMAKE_BINARY_DIR}/portable" "")
+    install(FILES "${CMAKE_BINARY_DIR}/portable" DESTINATION .)
+endif()
+
+set(CPACK_PACKAGE_NAME "rockchip-universal-imager")
+set(CPACK_PACKAGE_VENDOR "Rockchip Universal Imager")
+set(CPACK_PACKAGE_VERSION_MAJOR 1)
+set(CPACK_PACKAGE_VERSION_MINOR 0)
+set(CPACK_PACKAGE_VERSION_PATCH 0)
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Rockchip flashing and eMMC helper")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "RockchipUniversalImager")
+set(CPACK_VERBATIM_VARIABLES ON)
+
+if(APPLE)
+    # DragNDrop -> .dmg; ZIP -> portable. Chosen per job via `cpack -G`.
+    set(CPACK_DMG_VOLUME_NAME "Rockchip Universal Imager")
+    set(CPACK_DMG_FORMAT "UDZO")
+elseif(WIN32)
+    # NSIS -> setup.exe (Program Files); ZIP -> portable.
+    set(CPACK_NSIS_PACKAGE_NAME "Rockchip Universal Imager")
+    set(CPACK_NSIS_DISPLAY_NAME "Rockchip Universal Imager")
+    set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MUI_FINISHPAGE_RUN "rockchip-universal-imager.exe")
+else()
+    # DEB;RPM -> installers under /opt; TGZ -> portable. The installers place
+    # files at absolute paths, so anchor the package prefix at "/".
+    if(NOT RUI_PORTABLE)
+        set(CPACK_PACKAGING_INSTALL_PREFIX "/")
+    endif()
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Anthony Andrews")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libwebkit2gtk-4.1-0, libgtk-3-0, libadwaita-1-0, libusb-1.0-0")
+    set(CPACK_RPM_PACKAGE_LICENSE "Proprietary")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
+    set(CPACK_RPM_PACKAGE_REQUIRES "webkit2gtk4.1, gtk3, libadwaita, libusb1")
+endif()
+
+include(CPack)

@@ -19,7 +19,7 @@
 
 #endif
 
-namespace hwhelper {
+namespace rui {
 
 #if defined(_WIN32)
 
@@ -28,7 +28,7 @@ bool try_acquire_single_instance() {
     // handle is intentionally leaked for the process lifetime; the OS frees
     // it (and the name) when the process exits.
     static HANDLE mutex = nullptr;
-    mutex = CreateMutexW(nullptr, TRUE, L"Local\\HardwareHelperSingleInstance");
+    mutex = CreateMutexW(nullptr, TRUE, L"Local\\RockchipUniversalImagerSingleInstance");
     if (mutex == nullptr) {
         return true; // fail open
     }
@@ -42,8 +42,8 @@ bool try_acquire_single_instance() {
 
 void notify_already_running() {
     MessageBoxW(nullptr,
-                L"Hardware Helper is already running.",
-                L"Hardware Helper",
+                L"Rockchip Universal Imager is already running.",
+                L"Rockchip Universal Imager",
                 MB_OK | MB_ICONINFORMATION);
 }
 
@@ -56,7 +56,7 @@ bool try_acquire_single_instance() {
     static int lock_fd = -1;
 
     std::error_code ec;
-    const auto path = std::filesystem::temp_directory_path(ec) / "hardware-helper.lock";
+    const auto path = std::filesystem::temp_directory_path(ec) / "rockchip-universal-imager.lock";
     if (ec) {
         return true; // fail open
     }
@@ -80,10 +80,10 @@ bool try_acquire_single_instance() {
 // macOS provides a native (NSAlert) implementation in
 // single_instance_mac.mm; every other POSIX platform falls back to stderr.
 void notify_already_running() {
-    std::fprintf(stderr, "Hardware Helper is already running.\n");
+    std::fprintf(stderr, "Rockchip Universal Imager is already running.\n");
 }
 #endif
 
 #endif
 
-} // namespace hwhelper
+} // namespace rui

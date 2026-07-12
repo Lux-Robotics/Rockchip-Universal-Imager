@@ -2,7 +2,7 @@
 
 #include <functional>
 
-namespace hwhelper {
+namespace rui {
 
 // Invoked from the libusb event thread whenever a matching device arrives or
 // leaves. `present` is true on arrival, false on departure; vid/pid come
@@ -23,4 +23,4 @@ bool start_usb_monitor(UsbChangeCallback on_change);
 // start_usb_monitor() failed or was never called.
 void stop_usb_monitor();
 
-} // namespace hwhelper
+} // namespace rui

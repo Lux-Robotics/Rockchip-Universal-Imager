@@ -2,14 +2,14 @@
 
 #import <Cocoa/Cocoa.h>
 
-namespace hwhelper {
+namespace rui {
 namespace {
 
 std::function<bool()> g_should_block;
 std::function<void()> g_on_blocked;
 
 } // namespace
-} // namespace hwhelper
+} // namespace rui
 
 @interface HWHelperQuitGuard : NSObject <NSApplicationDelegate>
 @end
@@ -17,9 +17,9 @@ std::function<void()> g_on_blocked;
 @implementation HWHelperQuitGuard
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
-    if (hwhelper::g_should_block && hwhelper::g_should_block()) {
-        if (hwhelper::g_on_blocked) {
-            hwhelper::g_on_blocked();
+    if (rui::g_should_block && rui::g_should_block()) {
+        if (rui::g_on_blocked) {
+            rui::g_on_blocked();
         }
         return NSTerminateCancel;
     }
@@ -28,7 +28,7 @@ std::function<void()> g_on_blocked;
 
 @end
 
-namespace hwhelper {
+namespace rui {
 
 void install_quit_guard(std::function<bool()> should_block, std::function<void()> on_blocked) {
     g_should_block = std::move(should_block);
@@ -41,4 +41,4 @@ void install_quit_guard(std::function<bool()> should_block, std::function<void()
     [NSApp setDelegate:guard];
 }
 
-} // namespace hwhelper
+} // namespace rui

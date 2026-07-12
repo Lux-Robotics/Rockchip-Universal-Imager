@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Rockchip Universal Imager
+GenericName=Rockchip Flashing Tool
+Comment=Flash, back up, and erase Rockchip eMMC/SD/SPI storage
+Exec=rockchip-universal-imager
+Icon=rockchip-universal-imager
+Terminal=false
+Categories=Utility;System;
+Keywords=rockchip;rkdeveloptool;flash;emmc;maskrom;

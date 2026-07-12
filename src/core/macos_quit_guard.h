@@ -2,7 +2,7 @@
 
 #include <functional>
 
-namespace hwhelper {
+namespace rui {
 
 #ifdef __APPLE__
 // saucer's window::event::close only fires for a user-initiated window
@@ -19,4 +19,4 @@ namespace hwhelper {
 void install_quit_guard(std::function<bool()> should_block, std::function<void()> on_blocked);
 #endif
 
-} // namespace hwhelper
+} // namespace rui

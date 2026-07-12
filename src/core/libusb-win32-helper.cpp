@@ -27,7 +27,7 @@ namespace {
 constexpr unsigned short kVid = 0x2207;
 constexpr unsigned short kPid = 0x350b;
 constexpr char kDefaultDeviceName[] = "Rockchip Bootloader Device";
-constexpr char kVendorName[] = "hardware-helper";
+constexpr char kVendorName[] = "rockchip-universal-imager";
 
 bool is_running_as_admin() {
     BOOL is_admin = FALSE;
@@ -221,7 +221,7 @@ InstallResult perform_install(const std::string& device_name) {
         logging::write("driver", "Current driver: " + std::string(device->driver));
     }
 
-    const auto driver_dir = hwhelper::executable_dir() / "driver";
+    const auto driver_dir = rui::executable_dir() / "driver";
     std::filesystem::create_directories(driver_dir);
     const std::string driver_path = driver_dir.string();
     const std::string inf_name = "libusb-win32.inf";

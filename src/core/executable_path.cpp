@@ -12,7 +12,7 @@
 #include <unistd.h>
 #endif
 
-namespace hwhelper {
+namespace rui {
 
 std::filesystem::path executable_dir() {
 #if defined(_WIN32)
@@ -40,4 +40,33 @@ std::filesystem::path executable_dir() {
 #endif
 }
 
-} // namespace hwhelper
+std::filesystem::path companion_dir() {
+    const auto executable = executable_dir();
+#if defined(__APPLE__)
+    // <directory>/rockchip-universal-imager.app/Contents/MacOS -> <directory>. Only
+    // apply this layout rule to a real bundle; a bare development executable
+    // still uses files in its own directory.
+    const auto contents = executable.parent_path();
+    const auto bundle = contents.parent_path();
+    if (executable.filename() == "MacOS" &&
+        contents.filename() == "Contents" &&
+        bundle.extension() == ".app") {
+        return bundle.parent_path();
+    }
+#endif
+    return executable;
+}
+
+std::filesystem::path resource_dir() {
+#if defined(__APPLE__)
+    // <bundle>/Contents/MacOS -> <bundle>/Contents/Resources. Fall back to
+    // the executable directory when running as a bare (non-bundled) binary.
+    const auto resources = executable_dir().parent_path() / "Resources";
+    if (std::filesystem::exists(resources)) {
+        return resources;
+    }
+#endif
+    return executable_dir();
+}
+
+} // namespace rui

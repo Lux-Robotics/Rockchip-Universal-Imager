@@ -11,6 +11,13 @@
 #include "core/single_instance.h"
 #include "core/usb_monitor.h"
 
+#ifdef __APPLE__
+#include "core/macos_file_drop.h"
+#endif
+#ifdef __linux__
+#include "core/udev_rules_helper.h"
+#endif
+
 #include <atomic>
 #include <algorithm>
 #include <cctype>
@@ -29,6 +36,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifndef _WIN32
+#include <reproc++/reproc.hpp>
+#endif
 
 #ifdef _WIN32
 
@@ -95,9 +106,19 @@ struct DriverInfoResult {
     std::string error;
 };
 
+struct DependencyStatusResult {
+    bool ok = true;
+    std::string warning;
+};
+
 struct LogContentsResult {
     bool ok = false;
     std::string text;
+};
+
+struct OpenResult {
+    bool success = false;
+    std::string error;
 };
 
 namespace {
@@ -129,8 +150,24 @@ std::atomic<bool> g_loader_ready{false};
 constexpr unsigned int kStorageEmmc = 1;
 constexpr unsigned int kStorageSd = 2;
 constexpr unsigned int kStorageSpiNor = 9;
+// Probe order doubles as selection preference; the quick probe stops at the
+// first hit, so everything before the selected target is known-absent and
+// everything after is probed lazily in the background.
+constexpr unsigned int kStorageProbeOrder[] = {kStorageEmmc, kStorageSd, kStorageSpiNor};
 std::atomic<unsigned int> g_available_storage_mask{0};
 std::atomic<unsigned int> g_selected_storage{0};
+// True once every target in kStorageProbeOrder has been probed for the
+// current connection (quick probe found nothing, quick probe stopped at the
+// last target, or the lazy background probe finished). Cleared alongside the
+// mask on departure/disconnect.
+std::atomic<bool> g_storage_probe_complete{false};
+// True while the background probe holds g_flash_running. The window-close /
+// quit guards ignore a "flash" that is really just this probe - it writes
+// nothing, so quitting through it is harmless and must not trigger the
+// scary mid-operation prompt.
+std::atomic<bool> g_lazy_probe_running{false};
+std::mutex g_lazy_probe_thread_mutex;
+std::thread g_lazy_probe_thread;
 std::mutex g_usb_state_mutex;
 std::condition_variable g_usb_state_cv;
 bool g_usb_state_dirty = true; // start dirty so the worker does an initial pass
@@ -241,6 +278,12 @@ std::string run_rfi_output() {
     return run_rkdev_command({"rfi"}).output;
 }
 
+// Secure Erase's sparse all-zeros source file. Shared between the handler
+// that creates it and the startup/post-operation cleanup paths.
+std::filesystem::path secure_erase_zero_path() {
+    return std::filesystem::temp_directory_path() / "rui_secure_erase_zero.img";
+}
+
 constexpr unsigned int storage_bit(unsigned int storage) {
     return 1U << storage;
 }
@@ -283,43 +326,30 @@ bool change_storage_locked(unsigned int storage) {
     return run_rkdev_command({"cs", std::to_string(storage)}).exit_code == 0;
 }
 
-unsigned int preferred_storage(unsigned int available_mask) {
-    for (const unsigned int storage : {kStorageEmmc, kStorageSd, kStorageSpiNor}) {
-        if ((available_mask & storage_bit(storage)) != 0) {
-            return storage;
-        }
-    }
-    return 0;
-}
-
-// Probe the storage targets exposed by the current loader. `cs` does not
-// write user data, but it changes the active target, so finish by selecting a
-// deterministic default (eMMC, then SD, then SPI NOR) for the app's first
-// operation. A user selection later calls select_storage().
+// Quick probe: walk the preference order (eMMC, SD, SPI NOR) and stop at the
+// first target that accepts `cs` - the device is then already switched to
+// it, so the common case (an eMMC device) costs exactly one rkdeveloptool
+// round-trip instead of one per possible target. Targets later in the order
+// stay unknown until start_lazy_storage_probe fills them in off the connect
+// path. A user selection later calls select_storage().
 StorageTargetsResult probe_storage_targets() {
     std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
     unsigned int available_mask = 0;
-    for (const unsigned int storage : {kStorageEmmc, kStorageSd, kStorageSpiNor}) {
+    unsigned int selected = 0;
+    std::size_t probed = 0;
+    for (const unsigned int storage : kStorageProbeOrder) {
+        ++probed;
         if (change_storage_locked(storage)) {
             available_mask |= storage_bit(storage);
-        }
-    }
-
-    unsigned int selected = preferred_storage(available_mask);
-    if (selected != 0 && !change_storage_locked(selected)) {
-        // A target may disappear between the probe and final selection (for
-        // example, an SD card being removed). Do not present it as usable.
-        available_mask &= ~storage_bit(selected);
-        selected = preferred_storage(available_mask);
-        if (selected != 0 && !change_storage_locked(selected)) {
-            available_mask &= ~storage_bit(selected);
-            selected = 0;
+            selected = storage;
+            break;
         }
     }
 
     g_available_storage_mask.store(available_mask);
     g_selected_storage.store(selected);
     g_last_known_storage_sectors.store(0);
+    g_storage_probe_complete.store(probed >= std::size(kStorageProbeOrder));
 
     auto result = current_storage_targets();
     if (selected != 0) {
@@ -328,6 +358,70 @@ StorageTargetsResult probe_storage_targets() {
         logging::write("app", "no storage devices detected");
     }
     return result;
+}
+
+// Probe the targets the quick probe never reached, off the connect path. The
+// device is claimed via g_flash_running exactly like a flash task so nothing
+// else can touch it mid-probe; if the user got an operation in first, skip -
+// start_flash_task's on_exit re-invokes this once the device is free again.
+void start_lazy_storage_probe(const std::shared_ptr<saucer::smartview>& view) {
+    if (g_storage_probe_complete.load() || !g_loader_ready.load()) {
+        return;
+    }
+    g_lazy_probe_running.store(true);
+    bool expected = false;
+    if (!g_flash_running.compare_exchange_strong(expected, true)) {
+        g_lazy_probe_running.store(false);
+        return;
+    }
+
+    std::weak_ptr<saucer::smartview> weak_view = view;
+    std::thread worker([weak_view]() {
+        {
+            std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
+            const unsigned int selected = g_selected_storage.load();
+            unsigned int mask = g_available_storage_mask.load();
+            bool past_selected = selected == 0;
+            for (const unsigned int storage : kStorageProbeOrder) {
+                if (!past_selected) {
+                    // Everything up to and including the quick probe's stop
+                    // point is already known (absent, or the selected hit).
+                    past_selected = storage == selected;
+                    continue;
+                }
+                if (!g_device_present.load() || !g_loader_ready.load()) {
+                    break;
+                }
+                if (change_storage_locked(storage)) {
+                    mask |= storage_bit(storage);
+                }
+            }
+            // Probing switches the active target; put it back where the quick
+            // probe (or the user) left it before releasing the device.
+            if (selected != 0 && !change_storage_locked(selected)) {
+                mask &= ~storage_bit(selected);
+                if (g_selected_storage.load() == selected) {
+                    g_selected_storage.store(0);
+                }
+            }
+            g_available_storage_mask.store(mask);
+            g_storage_probe_complete.store(true);
+        }
+        g_flash_running.store(false);
+        g_lazy_probe_running.store(false);
+        signal_usb_state_changed();
+        if (g_webview_alive.load()) {
+            if (auto view = weak_view.lock()) {
+                view->execute("window.onStorageTargetsUpdated && window.onStorageTargetsUpdated()");
+            }
+        }
+    });
+
+    std::lock_guard<std::mutex> lock(g_lazy_probe_thread_mutex);
+    if (g_lazy_probe_thread.joinable()) {
+        g_lazy_probe_thread.join();
+    }
+    g_lazy_probe_thread = std::move(worker);
 }
 
 bool select_storage(unsigned int storage) {
@@ -479,7 +573,7 @@ UsedSpaceResult calculate_used_space() {
         return result;
     }
 
-    const auto used_sectors = hwhelper::find_used_sector_boundary(total_sectors);
+    const auto used_sectors = rui::find_used_sector_boundary(total_sectors);
     result.used_bytes = used_sectors * 512;
     result.success = true;
     logging::write("app", "Calculate Used Space: " + std::to_string(result.used_bytes) + " bytes");
@@ -495,7 +589,7 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
     // event thread) records them and wakes the worker below. No rkdeveloptool
     // transfer happens for detection. The `td` readiness probe runs only when
     // the user explicitly connects.
-    if (!hwhelper::start_usb_monitor([](bool present, unsigned short vid, unsigned short pid) {
+    if (!rui::start_usb_monitor([](bool present, unsigned short vid, unsigned short pid) {
             if (present) {
                 g_last_detected_vid.store(vid);
                 g_last_detected_pid.store(pid);
@@ -536,7 +630,7 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
             const bool present = g_device_present.load();
             const bool tool_missing = !rkdev::tool_available();
 
-            if (!present || tool_missing) {
+            if (!present) {
                 g_connect_requested.store(false);
                 g_loader_ready.store(false);
                 // Drop target state and cached capacity so a fresh connection
@@ -544,6 +638,7 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
                 g_available_storage_mask.store(0);
                 g_selected_storage.store(0);
                 g_last_known_storage_sectors.store(0);
+                g_storage_probe_complete.store(false);
             }
             // The worker never invokes rkdeveloptool: loader readiness is
             // established entirely by the connect flow (`td` for an
@@ -552,12 +647,12 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
             const bool is_ready = g_loader_ready.load();
 
             std::string status;
-            if (tool_missing) {
-                status = "tool_missing";
-            } else if (present && is_ready) {
+            if (present && is_ready) {
                 status = "connected";
             } else if (present) {
                 status = "detected";
+            } else if (tool_missing) {
+                status = "tool_missing";
             } else {
                 status = "disconnected";
             }
@@ -568,7 +663,7 @@ void start_device_polling(const std::shared_ptr<saucer::smartview>& view) {
             std::string soc;
             unsigned short vid = 0;
             unsigned short pid = 0;
-            if (present && !tool_missing) {
+            if (present) {
                 vid = static_cast<unsigned short>(g_last_detected_vid.load());
                 pid = static_cast<unsigned short>(g_last_detected_pid.load());
                 if (vid != 0 && pid != 0) {
@@ -620,6 +715,34 @@ void update_flash_progress(const std::shared_ptr<saucer::smartview>& view, int p
     view->execute("window.updateFlashProgress && window.updateFlashProgress({})", clamped);
 }
 
+// Reveal a directory in the OS file manager (Finder / Explorer / the default
+// XDG file manager). Best-effort: returns false if the opener couldn't be
+// launched or reported failure.
+bool open_path_in_file_manager(const std::string& path) {
+#if defined(_WIN32)
+    // ShellExecuteA takes the native narrow (ANSI) path that path.string()
+    // produces on Windows; ">32" is the documented success threshold.
+    const HINSTANCE result =
+        ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
+#else
+#if defined(__APPLE__)
+    std::vector<std::string> args = {"open", path};
+#else
+    std::vector<std::string> args = {"xdg-open", path};
+#endif
+    reproc::process process;
+    reproc::options options;
+    if (process.start(args, options)) {
+        return false;
+    }
+    // These launchers hand off to the file manager and exit promptly, so
+    // waiting is cheap and lets us report a real failure (non-zero exit).
+    const auto [status, wait_ec] = process.wait(reproc::infinite);
+    return !wait_ec && status == 0;
+#endif
+}
+
 std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned short pid, std::string& error) {
     for (size_t i = 0; i < kLoaderMapSize; ++i) {
         if (kLoaderMap[i].vid == vid && kLoaderMap[i].pid == pid) {
@@ -629,7 +752,7 @@ std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned shor
                         " - add its SPL loader to loader_binaries/ and map it in loader_map.h";
                 return std::nullopt;
             }
-            const std::filesystem::path path = hwhelper::executable_dir() / "loader_binaries" / kLoaderMap[i].filename;
+            const std::filesystem::path path = rui::resource_dir() / "loader_binaries" / kLoaderMap[i].filename;
             if (!std::filesystem::exists(path)) {
                 error = "loader file not found: " + path.string();
                 return std::nullopt;
@@ -681,7 +804,8 @@ enum class TaskCompletionAction {
 
 bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
                       const std::vector<std::string>& args,
-                      TaskCompletionAction completion_action = TaskCompletionAction::None) {
+                      TaskCompletionAction completion_action = TaskCompletionAction::None,
+                      std::function<void()> cleanup = {}) {
     bool expected = false;
     if (!g_flash_running.compare_exchange_strong(expected, true)) {
         return false;
@@ -690,22 +814,25 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
 
     update_flash_progress(view, 0);
 
-    int last_logged_percent = -1;
-    auto on_line = [view, last_logged_percent](const std::string& line) mutable {
+    // rkdeveloptool redraws its progress line many times per second, almost
+    // always at the same integer percent. Only forward a change to the UI when
+    // the percent actually moves so we don't fire a webview round-trip per
+    // redraw. Starts at -1 so the very first parsed percent always lands.
+    auto last_percent = std::make_shared<int>(-1);
+    auto on_line = [view, last_percent](const std::string& line) {
         // rkdeveloptool output lines reach the live-log panel via the logging
-        // sink (RkdevTask logs every line), so nothing to mirror here.
+        // sink (RkdevTask logs every line, with consecutive progress redraws
+        // replacing each other), so nothing to mirror or re-log here - just
+        // drive the progress bar.
         if (const auto percent = parse_progress_percent(line)) {
-            update_flash_progress(view, *percent);
-            // Always log a percent change, independent of verbose logging -
-            // this is the "is it actually still moving" signal, not noise.
-            if (*percent != last_logged_percent) {
-                last_logged_percent = *percent;
-                logging::write("rkdeveloptool", "progress: " + std::to_string(*percent) + "%");
+            if (*percent != *last_percent) {
+                *last_percent = *percent;
+                update_flash_progress(view, *percent);
             }
         }
     };
 
-    auto on_exit = [view, completion_action](const rkdev::ProcessResult& result) {
+    auto on_exit = [view, completion_action, cleanup = std::move(cleanup)](const rkdev::ProcessResult& result) {
         {
             // Don't leave the last-completed task pinned in g_flash_task
             // forever - nothing ever clears it otherwise, so it (and its
@@ -717,6 +844,13 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
 
         const bool cancelled = result.was_cancelled;
         const bool success = (result.exit_code == 0 && result.error_message.empty() && !cancelled);
+
+        if (cleanup) {
+            // Per-operation resource cleanup (e.g. Secure Erase's temp zero
+            // file) - runs on every completion path, success or not, now that
+            // the process no longer has the resource open.
+            cleanup();
+        }
 
         if (success && completion_action == TaskCompletionAction::Connect) {
             // `db` has made the loader available. Record Chip Info before the
@@ -735,6 +869,7 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
             g_available_storage_mask.store(0);
             g_selected_storage.store(0);
             g_last_known_storage_sectors.store(0);
+            g_storage_probe_complete.store(false);
         }
 
         g_flash_running.store(false);
@@ -766,6 +901,13 @@ bool start_flash_task(const std::shared_ptr<saucer::smartview>& view,
         // free again - in particular to pick up mode transitions without
         // waiting on a hotplug event.
         signal_usb_state_changed();
+
+        // If the background target probe never got to run (or got skipped
+        // because an operation claimed the device first), retry now that the
+        // device is free. No-op once complete for this connection.
+        if (g_webview_alive.load()) {
+            start_lazy_storage_probe(view);
+        }
     };
 
     auto task = rkdev::start_rkdeveloptool(args, on_line, on_exit);
@@ -819,6 +961,41 @@ bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const 
     return true;
 }
 
+#ifdef __linux__
+// The Linux analog of the Windows driver install: writes the Rockchip udev
+// rule via pkexec on a worker thread. Reuses the driver-install running flag,
+// thread slot, and completion callback - the two can't run concurrently and
+// the UI treats them as the same "device access setup" action.
+bool start_udev_rules_install(const std::shared_ptr<saucer::smartview>& view) {
+    bool expected = false;
+    if (!g_driver_install_running.compare_exchange_strong(expected, true)) {
+        return false;
+    }
+
+    std::weak_ptr<saucer::smartview> weak_view = view;
+    std::thread worker([weak_view]() {
+        const auto result = udev_rules::install();
+        g_driver_install_running.store(false);
+
+        if (!g_webview_alive.load()) {
+            return;
+        }
+        if (auto view = weak_view.lock()) {
+            const OperationResult payload{result.success, false, result.error_message};
+            view->execute("window.onDriverInstallComplete && window.onDriverInstallComplete({})", payload);
+        }
+    });
+
+    std::lock_guard<std::mutex> lock(g_driver_install_mutex);
+    if (g_driver_install_thread.joinable()) {
+        g_driver_install_thread.join();
+    }
+    g_driver_install_thread = std::move(worker);
+
+    return true;
+}
+#endif
+
 coco::stray run_app(saucer::application* app) {
     auto window = saucer::window::create(app).value();
     auto webview = std::make_shared<saucer::smartview>(saucer::smartview::create({.window = window}).value());
@@ -842,25 +1019,33 @@ coco::stray run_app(saucer::application* app) {
     // fire-and-forget, so the worker never blocks.
     {
         std::weak_ptr<saucer::smartview> weak_log_view = webview;
-        logging::set_sink([app, weak_log_view](const std::string& line) {
+        logging::set_sink([app, weak_log_view](const std::string& line, bool replace_last) {
             if (!g_webview_alive.load()) {
                 return;
             }
-            app->post([weak_log_view, line]() {
+            app->post([weak_log_view, line, replace_last]() {
                 if (!g_webview_alive.load()) {
                     return;
                 }
                 if (auto view = weak_log_view.lock()) {
-                    view->execute("window.appendLiveLog && window.appendLiveLog({})", line);
+                    view->execute("window.appendLiveLog && window.appendLiveLog({}, {})", line, replace_last);
                 }
             });
         });
     }
 
-    webview->expose("uiReady", [webview]() {
+    // Handlers registered on the webview must not capture the webview
+    // shared_ptr by value: the lambdas are stored inside the webview itself,
+    // so a strong capture is a self-reference cycle that keeps the smartview
+    // alive forever. Each handler locks this instead.
+    std::weak_ptr<saucer::smartview> weak_webview = webview;
+
+    webview->expose("uiReady", [weak_webview]() {
         bool expected = false;
         if (g_ui_ready.compare_exchange_strong(expected, true)) {
-            start_device_polling(webview);
+            if (auto view = weak_webview.lock()) {
+                start_device_polling(view);
+            }
         }
         return true;
     });
@@ -869,17 +1054,63 @@ coco::stray run_app(saucer::application* app) {
         return LogContentsResult{true, logging::read_all()};
     });
 
+    webview->expose("openLogDirectory", []() {
+        const std::string dir = logging::log_directory();
+        if (dir.empty() || !open_path_in_file_manager(dir)) {
+            return OpenResult{false, "could not open log folder"};
+        }
+        return OpenResult{true, ""};
+    });
+
     // saucer's window.saucer.exposed is a JS Proxy that returns a callable
     // stub for *any* property name regardless of whether it was actually
-    // registered here, so the frontend can't detect Windows-only endpoints
-    // (installUsbDriver/getUsbDriverInfo) by truthiness-checking them. Expose
-    // an explicit platform flag instead.
-    webview->expose("isWindowsPlatform", []() {
-#ifdef _WIN32
-        return true;
+    // registered here, so the frontend can't detect platform-only endpoints
+    // (installUsbDriver/installUdevRules) by truthiness-checking them. Expose
+    // an explicit platform name instead.
+    webview->expose("getPlatform", []() -> std::string {
+#if defined(_WIN32)
+        return "windows";
+#elif defined(__APPLE__)
+        return "macos";
 #else
-        return false;
+        return "linux";
 #endif
+    });
+
+    webview->expose("getDependencyStatus", []() {
+        DependencyStatusResult result;
+
+#if defined(__APPLE__)
+        const auto companion_dir = rui::companion_dir();
+        const auto external_rkdeveloptool = companion_dir / "rkdeveloptool";
+        const auto external_libusb = companion_dir / "libusb-1.0.0.dylib";
+
+        std::vector<std::string> missing;
+        if (!std::filesystem::exists(external_rkdeveloptool)) {
+            missing.emplace_back("rkdeveloptool");
+        }
+        if (!std::filesystem::exists(external_libusb)) {
+            missing.emplace_back("libusb-1.0.0.dylib");
+        }
+        if (!missing.empty()) {
+            result.ok = false;
+            result.warning = "Required external dependency missing beside rockchip-universal-imager.app: ";
+            for (std::size_t i = 0; i < missing.size(); ++i) {
+                if (i != 0) {
+                    result.warning += ", ";
+                }
+                result.warning += missing[i];
+            }
+            result.warning += " - keep it in the same folder as rockchip-universal-imager.app.";
+        }
+#else
+        if (!rkdev::tool_available()) {
+            result.ok = false;
+            result.warning = "rkdeveloptool is missing - reinstall or repair the app.";
+        }
+#endif
+
+        return result;
     });
 
 #ifdef _WIN32
@@ -888,9 +1119,25 @@ coco::stray run_app(saucer::application* app) {
         return DriverInfoResult{info.device_found, info.is_libusb_win32, info.driver_name, info.error_message};
     });
 
-    webview->expose("installUsbDriver", [webview](const std::string& device_name) {
-        if (!start_driver_install(webview, device_name)) {
+    webview->expose("installUsbDriver", [weak_webview](const std::string& device_name) {
+        auto view = weak_webview.lock();
+        if (!view || !start_driver_install(view, device_name)) {
             return StartResult{false, "driver install already in progress"};
+        }
+        return StartResult{true, ""};
+    });
+#endif
+
+#ifdef __linux__
+    webview->expose("getUdevRulesInfo", []() {
+        const auto info = udev_rules::query();
+        return DriverInfoResult{true, info.installed, info.installed ? "installed" : "", info.error};
+    });
+
+    webview->expose("installUdevRules", [weak_webview]() {
+        auto view = weak_webview.lock();
+        if (!view || !start_udev_rules_install(view)) {
+            return StartResult{false, "install already in progress"};
         }
         return StartResult{true, ""};
     });
@@ -916,7 +1163,11 @@ coco::stray run_app(saucer::application* app) {
         return FilePickResult{true, *path, ""};
     });
 
-    webview->expose("flashBootloader", [webview]() {
+    webview->expose("flashBootloader", [weak_webview]() {
+        auto webview = weak_webview.lock();
+        if (!webview) {
+            return StartResult{false, "shutting down"};
+        }
         const unsigned int vid = g_last_detected_vid.load();
         const unsigned int pid = g_last_detected_pid.load();
         if (vid == 0 || pid == 0) {
@@ -951,6 +1202,7 @@ coco::stray run_app(saucer::application* app) {
             update_flash_progress(webview, 100);
             const OperationResult payload{true, false, ""};
             webview->execute("window.onFlashComplete && window.onFlashComplete({})", payload);
+            start_lazy_storage_probe(webview);
             return StartResult{true, ""};
         }
 
@@ -971,7 +1223,11 @@ coco::stray run_app(saucer::application* app) {
         return StartResult{true, ""};
     });
 
-    webview->expose("disconnectDevice", [webview]() {
+    webview->expose("disconnectDevice", [weak_webview]() {
+        auto webview = weak_webview.lock();
+        if (!webview) {
+            return StartResult{false, "shutting down"};
+        }
         if (!g_loader_ready.load()) {
             return StartResult{false, "device is not connected"};
         }
@@ -983,7 +1239,11 @@ coco::stray run_app(saucer::application* app) {
         return StartResult{true, ""};
     });
 
-    webview->expose("flashImage", [webview](const std::string& image_path) {
+    webview->expose("flashImage", [weak_webview](const std::string& image_path) {
+        auto webview = weak_webview.lock();
+        if (!webview) {
+            return StartResult{false, "shutting down"};
+        }
         if (image_path.empty()) {
             return StartResult{false, "no .img file selected"};
         }
@@ -1004,7 +1264,11 @@ coco::stray run_app(saucer::application* app) {
         return StartResult{true, ""};
     });
 
-    webview->expose("eraseEmmc", [webview]() {
+    webview->expose("eraseEmmc", [weak_webview]() {
+        auto webview = weak_webview.lock();
+        if (!webview) {
+            return StartResult{false, "shutting down"};
+        }
         logging::write("app", "Quick Erase");
         if (!start_flash_task(webview, {"ef"})) {
             return StartResult{false, "flash already in progress"};
@@ -1012,7 +1276,11 @@ coco::stray run_app(saucer::application* app) {
         return StartResult{true, ""};
     });
 
-    webview->expose("secureEraseEmmc", [webview]() {
+    webview->expose("secureEraseEmmc", [weak_webview]() {
+        auto webview = weak_webview.lock();
+        if (!webview) {
+            return StartResult{false, "shutting down"};
+        }
         const unsigned int storage = g_selected_storage.load();
         if (storage == 0) {
             return StartResult{false, "no storage target selected"};
@@ -1046,7 +1314,7 @@ coco::stray run_app(saucer::application* app) {
         // disk - a sparse file of that length reads back as zeros for any
         // region never actually written, which is exactly what we want, at
         // negligible real disk cost.
-        const auto zero_path = std::filesystem::temp_directory_path() / "hwhelper_secure_erase_zero.img";
+        const auto zero_path = secure_erase_zero_path();
         std::error_code remove_ec;
         std::filesystem::remove(zero_path, remove_ec);
         {
@@ -1062,13 +1330,24 @@ coco::stray run_app(saucer::application* app) {
         }
 
         logging::write("app", "Secure Erase: overwriting " + std::to_string(total_sectors * 512) + " bytes with zeros");
-        if (!start_flash_task(webview, {"wl", "0", zero_path.string()})) {
+        // Remove the (sparse, but alarmingly large-looking) source file once
+        // the write finishes - it previously sat in temp forever.
+        auto remove_zero_file = [zero_path]() {
+            std::error_code cleanup_ec;
+            std::filesystem::remove(zero_path, cleanup_ec);
+        };
+        if (!start_flash_task(webview, {"wl", "0", zero_path.string()},
+                              TaskCompletionAction::None, std::move(remove_zero_file))) {
             return StartResult{false, "flash already in progress"};
         }
         return StartResult{true, ""};
     });
 
-    webview->expose("backupEmmc", [webview](const std::string& dest_path, bool force) {
+    webview->expose("backupEmmc", [weak_webview](const std::string& dest_path, bool force) {
+        auto webview = weak_webview.lock();
+        if (!webview) {
+            return BackupStartResult{false, false, "shutting down"};
+        }
         if (dest_path.empty()) {
             return BackupStartResult{false, false, "no destination selected"};
         }
@@ -1086,7 +1365,7 @@ coco::stray run_app(saucer::application* app) {
         std::uint64_t total_sectors = 0;
         {
             std::lock_guard<std::mutex> lock(g_rkdev_probe_mutex);
-            if (const auto gpt = hwhelper::read_gpt_info()) {
+            if (const auto gpt = rui::read_gpt_info()) {
                 main_sectors = gpt->last_used_lba + 1;
             }
             parse_flash_size_sectors(run_rfi_output(), total_sectors);
@@ -1122,7 +1401,7 @@ coco::stray run_app(saucer::application* app) {
                     "No partition table was found on this storage target, so it can't be trimmed precisely. "
                     "If this device was previously flashed and erased, its old data may still be physically "
                     "present and could be captured in this backup (erase does not guarantee a secure wipe). "
-                    "This will back up the entire %.1f GB device. Continue?",
+                    "This will back up the entire %.1f GiB device. Continue?",
                     total_gb);
                 return BackupStartResult{false, true, std::string(buf)};
             }
@@ -1196,7 +1475,10 @@ coco::stray run_app(saucer::application* app) {
     // webview -> window reference cycle that never gets collected.
     std::weak_ptr<saucer::smartview> weak_webview_for_close = webview;
     window->on<saucer::window::event::close>([weak_webview_for_close]() -> saucer::policy {
-        if (!g_flash_running.load() || g_force_quit.load()) {
+        // The lazy storage probe claims g_flash_running to keep the device
+        // exclusive, but it writes nothing - quitting through it is harmless
+        // and must not raise the mid-operation prompt.
+        if (!g_flash_running.load() || g_lazy_probe_running.load() || g_force_quit.load()) {
             return saucer::policy::allow;
         }
         if (g_webview_alive.load()) {
@@ -1225,8 +1507,8 @@ coco::stray run_app(saucer::application* app) {
     // Cmd+Q / the app menu's Quit item never reach window::event::close (see
     // macos_quit_guard.h) - cover that path separately, using the same
     // g_flash_running/g_force_quit checks and the same JS-side prompt.
-    hwhelper::install_quit_guard(
-        [] { return g_flash_running.load() && !g_force_quit.load(); },
+    rui::install_quit_guard(
+        [] { return g_flash_running.load() && !g_lazy_probe_running.load() && !g_force_quit.load(); },
         [weak_webview_for_close]() {
             if (g_webview_alive.load()) {
                 if (auto view = weak_webview_for_close.lock()) {
@@ -1236,7 +1518,26 @@ coco::stray run_app(saucer::application* app) {
         });
 #endif
 
-    window->set_title("Hardware Helper");
+#ifdef __APPLE__
+    // Native drop target for .img files (WKWebView can't hand a dropped
+    // file's path to JS). Weak capture for the same self-cycle reason as the
+    // expose handlers above.
+    rui::install_file_drop_target(window, [weak_webview](const std::string& path) {
+        if (!g_webview_alive.load()) {
+            return;
+        }
+        auto view = weak_webview.lock();
+        if (!view) {
+            return;
+        }
+        std::error_code size_ec;
+        const auto size = std::filesystem::file_size(path, size_ec);
+        const FilePickResult payload{true, path, "", size_ec ? 0 : static_cast<std::uint64_t>(size)};
+        view->execute("window.onImageFileDropped && window.onImageFileDropped({})", payload);
+    });
+#endif
+
+    window->set_title("Rockchip Universal Imager");
     window->set_size({.w = 800, .h = 600});
 
     webview->embed(saucer::embedded::all());
@@ -1275,11 +1576,18 @@ coco::stray run_app(saucer::application* app) {
         }
     }
 
+    {
+        std::lock_guard<std::mutex> lock(g_lazy_probe_thread_mutex);
+        if (g_lazy_probe_thread.joinable()) {
+            g_lazy_probe_thread.join();
+        }
+    }
+
     g_webview_alive.store(false);
 
     // Stop the hotplug monitor first so no further arrival/departure events
     // wake the worker after we've asked it to exit.
-    hwhelper::stop_usb_monitor();
+    rui::stop_usb_monitor();
 
     g_polling_stop.store(true);
     signal_usb_state_changed(); // wake the worker out of its CV wait so it sees the stop
@@ -1303,8 +1611,8 @@ int run_application() {
     // exclusive - the two processes race for the handle and wedge each other.
     // Checked before any logging so a blocked second instance doesn't spawn a
     // stray per-launch log file just to exit.
-    if (!hwhelper::try_acquire_single_instance()) {
-        hwhelper::notify_already_running();
+    if (!rui::try_acquire_single_instance()) {
+        rui::notify_already_running();
         return 0;
     }
 
@@ -1312,6 +1620,14 @@ int run_application() {
     // away rather than lazily on the first rkdeveloptool/UI log line, and
     // gives every log a clear marker of where a session started.
     logging::write("app", "launched");
+
+    // A Secure Erase interrupted by a crash/force-quit can leave its sparse
+    // source file behind; the normal cleanup runs when the operation ends,
+    // so anything still here is stale.
+    {
+        std::error_code stale_ec;
+        std::filesystem::remove(secure_erase_zero_path(), stale_ec);
+    }
 #ifdef _WIN32
     wchar_t appdata_path[MAX_PATH];
     const DWORD appdata_len = GetEnvironmentVariableW(
@@ -1320,27 +1636,27 @@ int run_application() {
         static_cast<DWORD>(std::size(appdata_path)));
     if (appdata_len > 0 && appdata_len < std::size(appdata_path)) {
         std::wstring user_data_dir = appdata_path;
-        user_data_dir += L"\\HardwareHelper\\WebView2";
+        user_data_dir += L"\\RockchipUniversalImager\\WebView2";
         SetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", user_data_dir.c_str());
     }
 
-#if defined(HWHELPER_DISABLE_GPU)
+#if defined(RUI_DISABLE_GPU)
     SetEnvironmentVariableW(
         L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
         L"--disable-gpu --disable-gpu-compositing --disable-extensions --disable-features=BackForwardCache --no-first-run --disable-background-networking --disable-component-update");
 #endif
 #elif defined(__APPLE__)
-#if defined(HWHELPER_DISABLE_GPU)
+#if defined(RUI_DISABLE_GPU)
     setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
 #endif
 #elif defined(__linux__)
-#if defined(HWHELPER_DISABLE_GPU)
+#if defined(RUI_DISABLE_GPU)
     setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
     setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 1);
 #endif
 #endif
 
-    auto app = saucer::application::create({.id = "hardware-helper"});
+    auto app = saucer::application::create({.id = "rockchip-universal-imager"});
     return app->run(run_app);
 }
 

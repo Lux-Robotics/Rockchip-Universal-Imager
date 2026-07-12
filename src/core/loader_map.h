@@ -19,7 +19,7 @@ struct LoaderMapEntry {
 // it needs a loader. To enable one, drop the matching *_spl_loader_*.bin into
 // loader_binaries/ and set filename here.
 constexpr LoaderMapEntry kLoaderMap[] = {
-    {0x2207, 0x110c, "RK1106", nullptr},
+    {0x2207, 0x110c, "RV1106", nullptr},
     {0x2207, 0x180a, "RK1808", nullptr},
     {0x2207, 0x281a, "RK2818", nullptr},
     {0x2207, 0x290a, "RK2918", nullptr},

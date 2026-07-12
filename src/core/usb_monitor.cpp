@@ -7,7 +7,7 @@
 
 #include "core/logging.h"
 
-namespace hwhelper {
+namespace rui {
 namespace {
 
 // All Rockchip parts enumerate under this vendor ID in Maskrom and loader
@@ -112,4 +112,4 @@ void stop_usb_monitor() {
     g_on_change = nullptr;
 }
 
-} // namespace hwhelper
+} // namespace rui

@@ -18,9 +18,7 @@ struct ProcessResult {
     std::string error_message;
 };
 
-int run_rkdeveloptool(const std::vector<std::string>& args);
-
-// True if the rkdeveloptool binary is present next to the app. Cheap
+// True if the externally shipped rkdeveloptool binary is present. Cheap
 // filesystem check (no process spawn), used to distinguish "device present
 // but we can't talk to it" from a normal disconnect.
 bool tool_available();
@@ -56,6 +54,14 @@ private:
     std::atomic<bool> cancelled_{false};
     std::thread worker_;
     reproc::process process_;
+    // Serializes process_.start() (worker thread) against terminate()/kill()
+    // (cancel, from any thread). reproc::process is not thread-safe; without
+    // this, a cancel landing mid-start() operates on a half-initialized
+    // handle. Never held across drain()/wait() - cancel must stay able to
+    // kill a process the worker is blocked reading from.
+    std::mutex process_mutex_;
+    bool process_started_ = false;
+    bool process_reaped_ = false;
 
     mutable std::mutex mutex_;
     ProcessResult result_;

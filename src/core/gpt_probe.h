@@ -4,7 +4,7 @@
 #include <optional>
 #include <vector>
 
-namespace hwhelper {
+namespace rui {
 
 // Blocking read of `count` sectors starting at `begin_sector` off the
 // connected device via rkdeveloptool. Returns nullopt if the read fails.
@@ -44,4 +44,4 @@ std::optional<GptInfo> read_gpt_info();
 // means the device is effectively blank.
 std::uint64_t find_used_sector_boundary(std::uint64_t total_sectors);
 
-} // namespace hwhelper
+} // namespace rui

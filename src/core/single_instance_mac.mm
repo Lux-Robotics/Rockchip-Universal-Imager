@@ -2,7 +2,7 @@
 
 #import <Cocoa/Cocoa.h>
 
-namespace hwhelper {
+namespace rui {
 
 // Native alert for the early-exit path. Runs before saucer creates its own
 // application, so ensure the shared NSApplication exists first; NSAlert spins
@@ -14,11 +14,11 @@ void notify_already_running() {
         [NSApp activateIgnoringOtherApps:YES];
 
         NSAlert *alert = [[NSAlert alloc] init];
-        alert.messageText = @"Hardware Helper is already running.";
+        alert.messageText = @"Rockchip Universal Imager is already running.";
         alert.informativeText = @"Only one instance can run at a time. Switch to the window that's already open.";
         [alert addButtonWithTitle:@"OK"];
         [alert runModal];
     }
 }
 
-} // namespace hwhelper
+} // namespace rui

@@ -1,6 +1,6 @@
 #pragma once
 
-namespace hwhelper {
+namespace rui {
 
 // Attempts to become the single running instance of the app. Returns true if
 // this process acquired the lock (i.e. it's the only/first instance), false
@@ -17,4 +17,4 @@ bool try_acquire_single_instance();
 // try_acquire_single_instance() returns false).
 void notify_already_running();
 
-} // namespace hwhelper
+} // namespace rui

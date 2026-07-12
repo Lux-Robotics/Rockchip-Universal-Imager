@@ -3,12 +3,12 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hardware Helper</title>
+    <title>Rockchip Universal Imager</title>
     <link rel="stylesheet" href="app.css" />
 </head>
 <body>
     <div style="max-width:640px; width:100%; padding:24px;">
-        <h1 style="margin:0 0 16px 0;">Hardware Helper</h1>
+        <h1 style="margin:0 0 16px 0;">Rockchip Universal Imager</h1>
 
         <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
             <div id="statusDot" style="width:12px; height:12px; border-radius:50%; background:#a33;"></div>
@@ -27,6 +27,7 @@
         </div>
         <div id="driverStatus" style="color:#bbb; margin-top:8px; min-height:20px;"></div>
         <div id="flashStatus" style="color:#bbb; margin-top:8px; min-height:20px;"></div>
+        <div id="errorStatus" style="color:#e05b5b; margin-top:4px; min-height:20px; word-break:break-word;"></div>
 
         <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
             <button id="installDriver" data-platform="win">Install libusb-win32</button>
@@ -63,6 +64,7 @@
             <div style="display:flex; gap:8px; margin-bottom:8px;">
                 <button id="copyLog">Copy Log</button>
                 <button id="clearLog">Clear Log</button>
+                <button id="openLogDir">Open Log Folder</button>
             </div>
             <textarea id="liveLog" readonly style="width:100%; height:160px; background:#0b0b0b; color:#9bd; border:1px solid #333; padding:8px;"></textarea>
         </div>
