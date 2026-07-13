@@ -1,20 +1,24 @@
 # rkdeveloptool (C++ companion)
 
-This tool **stays C++** and is **not** part of the Rust/Tauri crate.
+Not part of the Tauri crate. The GUI **spawns** this binary; users can also run
+it directly from a terminal in the portable zip.
 
-## Portable layout (v1)
+## Source
 
-Zip contents (same folder):
+Upstream (project default): https://github.com/lux-robotics/rkdeveloptool
 
-```
-rockchip-universal-imager      # or .exe on Windows / .app on macOS later
-rkdeveloptool                  # or rkdeveloptool.exe
-portable                       # empty marker file
-loader_binaries/               # optional SPL loaders
-```
+Build with autotools on macOS/Linux, or MSYS2 / llvm-mingw on Windows. Optional
+helper scripts in `scripts/` are conveniences only—they are not required by the
+Rust app build.
 
-Build `rkdeveloptool` with the existing autotools/MSYS scripts (see repo-root
-`cmake/` helpers and CI). Stage the binary next to the Tauri app when packaging
-via `scripts/package-portable.mjs`.
+## Portable layout
 
-The GUI only **spawns** this binary; it never links against its sources.
+Place the built binary next to the Tauri app:
+
+| OS | File name |
+|----|-----------|
+| Windows | `rkdeveloptool.exe` |
+| macOS / Linux | `rkdeveloptool` |
+
+Then run `scripts/package-portable.mjs` with `RKDEV_BIN` set, or copy by hand
+into the zip folder with an empty `portable` marker file.

@@ -1,9 +1,23 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# C++ leftovers (should not reappear)
 build/
 out/
-embedded/
-.DS_Store
 compile_commands.json
+cmake-build-*/
+embedded/
 
-# Tauri / Rust
-apps/imager-tauri/src-tauri/target/
+# Rust / Tauri
+apps/**/src-tauri/target/
+apps/**/node_modules/
 dist/
+*.log
+log/
+
+# Local env
+.env
+.env.*

@@ -1,4 +1,0 @@
-#pragma once
-#if @LIBWDI_BUILD64@
-#define BUILD64 1
-#endif
