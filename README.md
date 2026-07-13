@@ -11,9 +11,8 @@ a separate C++ binary** that the app spawns (same product model as before).
 ```
 apps/imager-tauri/     # Tauri app (Rust backend + web UI)
 tools/rkdeveloptool/   # How to obtain/build the C++ companion CLI
-scripts/               # Portable zip packaging
+packaging/             # Portable zip script + future installer assets
 loader_binaries/       # SPL loader blobs shipped with portable builds
-packaging/             # Future installer assets (DMG/desktop/etc.)
 ```
 
 ## Develop
@@ -33,7 +32,7 @@ cd apps/imager-tauri
 cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle
 
 # Build or download rkdeveloptool separately, then:
-RKDEV_BIN=/path/to/rkdeveloptool ./scripts/package-portable.sh
+RKDEV_BIN=/path/to/rkdeveloptool ./packaging/package-portable.sh
 ```
 
 Zip contents:

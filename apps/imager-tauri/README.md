@@ -25,7 +25,7 @@ cargo tauri dev --manifest-path src-tauri/Cargo.toml
 cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle
 
 # Zip: app + rkdeveloptool + portable marker
-RKDEV_BIN=/path/to/rkdeveloptool ../../scripts/package-portable.sh
+RKDEV_BIN=/path/to/rkdeveloptool ../../packaging/package-portable.sh
 ```
 
 `tauri.conf.json` has `"bundle": { "active": false }` so **installers are off by default**.  
@@ -44,7 +44,7 @@ Installers (NSIS/DMG/DEB) can be enabled later without changing the app logic.
 
 - **Cargo/Tauri** builds the **GUI process** only.
 - **`rkdeveloptool` (C++)** is built by existing autotools/MSYS/cmake helpers under repo `cmake/` / CI — **not** by `cargo build`.
-- **`scripts/package-portable.sh`** copies both into one zip.
+- **`packaging/package-portable.sh`** copies both into one zip.
 
 ### GitHub Actions integration
 
@@ -88,7 +88,7 @@ jobs:
       - name: Portable zip
         env:
           RKDEV_BIN: ${{ github.workspace }}/out/rkdeveloptool
-        run: ./scripts/package-portable.sh
+        run: ./packaging/package-portable.sh
       - uses: actions/upload-artifact@v4
         with:
           name: portable-${{ matrix.os }}
@@ -136,7 +136,7 @@ Use **`rusb` (libusb C)** hotplug on Unix **and** attempt on Windows. If Windows
 ```
 apps/imager-tauri/     # this app
 tools/rkdeveloptool/   # docs + future staging for C++ tool
-scripts/               # portable zip, CI helpers
+packaging/             # portable zip script + future installer assets
 ```
 
 Legacy C++ Saucer tree remains at repo root `src/` until cutover.
@@ -151,4 +151,4 @@ Legacy C++ Saucer tree remains at repo root `src/` until cutover.
 - Linux: `libwebkit2gtk-4.1-dev`, `libusb-1.0-0-dev`, …  
 - Windows: WebView2, MSVC  
 
-Optional npm scripts under apps/imager-tauri are thin wrappers; packaging uses `scripts/package-portable.sh` (bash + zip). Node is not required for the GUI build.
+Optional npm scripts under apps/imager-tauri are thin wrappers; packaging uses `packaging/package-portable.sh` (bash + zip). Node is not required for the GUI build.

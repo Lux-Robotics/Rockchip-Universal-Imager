@@ -2,8 +2,8 @@
 # Assemble a portable zip: Tauri app binary + rkdeveloptool + portable marker.
 #
 # Usage (after `cargo tauri build --no-bundle` in apps/imager-tauri):
-#   ./scripts/package-portable.sh
-#   RKDEV_BIN=/path/to/rkdeveloptool ./scripts/package-portable.sh
+#   ./packaging/package-portable.sh
+#   RKDEV_BIN=/path/to/rkdeveloptool ./packaging/package-portable.sh
 #
 # Env:
 #   RKDEV_BIN  path to prebuilt rkdeveloptool (needed for a complete zip)
