@@ -8,6 +8,6 @@
     "tauri": "cargo tauri --manifest-path src-tauri/Cargo.toml",
     "dev": "cargo tauri dev --manifest-path src-tauri/Cargo.toml",
     "build": "cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle",
-    "build:portable": "cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle && node ../../scripts/package-portable.mjs"
+    "build:portable": "cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle && bash ../../scripts/package-portable.sh"
   }
 }

@@ -25,7 +25,7 @@ cargo tauri dev --manifest-path src-tauri/Cargo.toml
 cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle
 
 # Zip: app + rkdeveloptool + portable marker
-RKDEV_BIN=/path/to/rkdeveloptool node ../../scripts/package-portable.mjs
+RKDEV_BIN=/path/to/rkdeveloptool ../../scripts/package-portable.sh
 ```
 
 `tauri.conf.json` has `"bundle": { "active": false }` so **installers are off by default**.  
@@ -44,7 +44,7 @@ Installers (NSIS/DMG/DEB) can be enabled later without changing the app logic.
 
 - **Cargo/Tauri** builds the **GUI process** only.
 - **`rkdeveloptool` (C++)** is built by existing autotools/MSYS/cmake helpers under repo `cmake/` / CI — **not** by `cargo build`.
-- **`scripts/package-portable.mjs`** copies both into one zip.
+- **`scripts/package-portable.sh`** copies both into one zip.
 
 ### GitHub Actions integration
 
@@ -88,7 +88,7 @@ jobs:
       - name: Portable zip
         env:
           RKDEV_BIN: ${{ github.workspace }}/out/rkdeveloptool
-        run: node scripts/package-portable.mjs
+        run: ./scripts/package-portable.sh
       - uses: actions/upload-artifact@v4
         with:
           name: portable-${{ matrix.os }}
@@ -151,4 +151,4 @@ Legacy C++ Saucer tree remains at repo root `src/` until cutover.
 - Linux: `libwebkit2gtk-4.1-dev`, `libusb-1.0-0-dev`, …  
 - Windows: WebView2, MSVC  
 
-Node is only required for `package-portable.mjs` (and optional npm scripts), not for compiling the GUI if you invoke `cargo tauri` directly.
+Optional npm scripts under apps/imager-tauri are thin wrappers; packaging uses `scripts/package-portable.sh` (bash + zip). Node is not required for the GUI build.

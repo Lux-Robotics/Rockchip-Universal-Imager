@@ -20,5 +20,5 @@ Place the built binary next to the Tauri app:
 | Windows | `rkdeveloptool.exe` |
 | macOS / Linux | `rkdeveloptool` |
 
-Then run `scripts/package-portable.mjs` with `RKDEV_BIN` set, or copy by hand
+Then run `scripts/package-portable.sh` with `RKDEV_BIN` set, or copy by hand
 into the zip folder with an empty `portable` marker file.

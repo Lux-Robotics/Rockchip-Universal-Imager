@@ -33,7 +33,7 @@ cd apps/imager-tauri
 cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle
 
 # Build or download rkdeveloptool separately, then:
-RKDEV_BIN=/path/to/rkdeveloptool node ../../scripts/package-portable.mjs
+RKDEV_BIN=/path/to/rkdeveloptool ./scripts/package-portable.sh
 ```
 
 Zip contents:
