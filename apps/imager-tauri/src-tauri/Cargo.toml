@@ -1,0 +1,36 @@
+[package]
+name = "rockchip-universal-imager"
+version = "0.1.0"
+description = "Rockchip flashing and eMMC helper"
+authors = ["Rockchip Universal Imager"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "rockchip_universal_imager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Process spawning: std::process + a dedicated reader thread (see D3 note in
+# apps/imager-tauri/README.md). Tokio is NOT a direct dependency; Tauri may
+# still pull async runtimes transitively for the webview shell.
+# rusb (libusb C bindings) is added when USB monitor lands (D4 option B).
+
+[target.'cfg(unix)'.dependencies]
+# Reserved for rusb in M3; listed when we enable hotplug.
+
+[features]
+default = []

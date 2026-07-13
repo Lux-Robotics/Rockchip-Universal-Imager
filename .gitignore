@@ -3,3 +3,7 @@ out/
 embedded/
 .DS_Store
 compile_commands.json
+
+# Tauri / Rust
+apps/imager-tauri/src-tauri/target/
+dist/

@@ -1,0 +1,13 @@
+{
+  "name": "rockchip-universal-imager",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Rockchip Universal Imager (Tauri)",
+  "type": "module",
+  "scripts": {
+    "tauri": "cargo tauri --manifest-path src-tauri/Cargo.toml",
+    "dev": "cargo tauri dev --manifest-path src-tauri/Cargo.toml",
+    "build": "cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle",
+    "build:portable": "cargo tauri build --manifest-path src-tauri/Cargo.toml --no-bundle && node ../../scripts/package-portable.mjs"
+  }
+}
