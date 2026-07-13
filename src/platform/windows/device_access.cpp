@@ -1,6 +1,12 @@
-#include "core/libusb-win32-helper.h"
+#include "core/device_access.h"
 #include "core/logging.h"
 #include "core/executable_path.h"
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -8,21 +14,16 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <shellapi.h>
-#endif
-
-#if defined(_WIN32) && defined(HAVE_LIBWDI)
+#if defined(HAVE_LIBWDI)
 #include <algorithm>
 #include <cctype>
 #include <libwdi.h>
+#endif
 
-namespace usb_driver {
+namespace device_access {
 namespace {
+
+#if defined(HAVE_LIBWDI)
 
 constexpr unsigned short kVid = 0x2207;
 constexpr unsigned short kPid = 0x350b;
@@ -91,26 +92,27 @@ wdi_device_info* find_device(wdi_device_info* list) {
     return nullptr;
 }
 
-DriverInfo build_info(wdi_device_info* device) {
-    DriverInfo info;
-    info.device_found = device != nullptr;
+Status status_from_device(wdi_device_info* device) {
+    Status status;
+    status.kind = Kind::windows_driver;
+    status.device_relevant = device != nullptr;
     if (!device) {
-        info.error_message = "device not found";
-        return info;
+        status.ready = false;
+        status.error = "device not found";
+        return status;
     }
 
     if (device->driver) {
-        info.driver_name = device->driver;
+        status.detail = device->driver;
     } else {
-        info.driver_name = "(none)";
+        status.detail = "(none)";
     }
 
-    info.is_libusb_win32 = is_libusb_win32_driver(device->driver);
-    if (!info.is_libusb_win32) {
-        info.error_message = "driver is " + info.driver_name + " (expected libusb-win32)";
+    status.ready = is_libusb_win32_driver(device->driver);
+    if (!status.ready) {
+        status.error = "driver is " + status.detail + " (expected libusb-win32)";
     }
-
-    return info;
+    return status;
 }
 
 InstallResult run_elevated_install(const std::string& device_name) {
@@ -255,30 +257,10 @@ InstallResult perform_install(const std::string& device_name) {
     return result;
 }
 
-} // namespace
-
-DriverInfo query_driver() {
-    wdi_device_info* list = nullptr;
-    wdi_options_create_list options{};
-    options.list_all = TRUE;
-
-    const int err = wdi_create_list(&list, &options);
-    if (err != WDI_SUCCESS) {
-        DriverInfo info;
-        info.error_message = wdi_strerror(err);
-        return info;
-    }
-
-    wdi_device_info* device = find_device(list);
-    DriverInfo info = build_info(device);
-    wdi_destroy_list(list);
-    return info;
-}
-
-InstallResult install_libusb_win32(const InstallOptions& options) {
+InstallResult install_libusb_win32(const InstallOptions& options, bool allow_elevation) {
     const std::string device_name = options.device_name.empty() ? kDefaultDeviceName : options.device_name;
     if (!is_running_as_admin()) {
-        if (!options.allow_elevation) {
+        if (!allow_elevation) {
             InstallResult result;
             result.error_message = "administrator privileges required";
             logging::write("driver", "Driver install requires administrator privileges.");
@@ -286,35 +268,8 @@ InstallResult install_libusb_win32(const InstallOptions& options) {
         }
         return run_elevated_install(device_name);
     }
-
     return perform_install(device_name);
 }
-
-} // namespace usb_driver
-
-#else
-
-namespace usb_driver {
-
-DriverInfo query_driver() {
-    DriverInfo info;
-    info.error_message = "libwdi not available on this platform";
-    return info;
-}
-
-InstallResult install_libusb_win32(const InstallOptions&) {
-    InstallResult result;
-    result.error_message = "libwdi not available on this platform";
-    return result;
-}
-
-} // namespace usb_driver
-
-#endif
-
-#ifdef _WIN32
-namespace win_driver {
-namespace {
 
 std::vector<std::wstring> get_command_line_args() {
     int argc = 0;
@@ -368,22 +323,63 @@ std::string wide_to_utf8(const std::wstring& input) {
     return out;
 }
 
+#endif // HAVE_LIBWDI
+
 } // namespace
 
-bool try_handle_driver_install_cli(int& exit_code) {
+Status query() {
+    Status status;
+    status.kind = Kind::windows_driver;
+#if defined(HAVE_LIBWDI)
+    wdi_device_info* list = nullptr;
+    wdi_options_create_list options{};
+    options.list_all = TRUE;
+
+    const int err = wdi_create_list(&list, &options);
+    if (err != WDI_SUCCESS) {
+        status.ready = false;
+        status.device_relevant = false;
+        status.error = wdi_strerror(err);
+        return status;
+    }
+
+    wdi_device_info* device = find_device(list);
+    status = status_from_device(device);
+    wdi_destroy_list(list);
+    return status;
+#else
+    status.ready = false;
+    status.device_relevant = false;
+    status.error = "libwdi not available in this build";
+    return status;
+#endif
+}
+
+InstallResult install(const InstallOptions& options) {
+#if defined(HAVE_LIBWDI)
+    return install_libusb_win32(options, true);
+#else
+    (void)options;
+    InstallResult result;
+    result.error_message = "libwdi not available in this build";
+    return result;
+#endif
+}
+
+bool try_handle_elevated_cli(int& exit_code) {
+#if defined(HAVE_LIBWDI)
     const auto args = get_command_line_args();
     if (!has_flag(args, L"--install-driver")) {
         return false;
     }
 
-    usb_driver::InstallOptions options;
-    options.allow_elevation = false;
+    InstallOptions options;
     const auto device_name = get_flag_value(args, L"--device-name");
     if (!device_name.empty()) {
         options.device_name = wide_to_utf8(device_name);
     }
 
-    const auto result = usb_driver::install_libusb_win32(options);
+    const auto result = install_libusb_win32(options, false);
     if (!result.success) {
         logging::write("driver", "Elevated driver install failed: " + result.error_message);
         exit_code = 1;
@@ -391,8 +387,10 @@ bool try_handle_driver_install_cli(int& exit_code) {
         exit_code = 0;
     }
     return true;
+#else
+    (void)exit_code;
+    return false;
+#endif
 }
 
-} // namespace win_driver
-
-#endif
+} // namespace device_access

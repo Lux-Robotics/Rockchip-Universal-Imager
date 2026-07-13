@@ -1,53 +1,21 @@
 #include "core/single_instance.h"
 
+#include <cstdio>
 #include <filesystem>
 #include <string>
 
-#if defined(_WIN32)
-
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-
-#else
-
-#include <cstdio>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
 
+#if !defined(__APPLE__)
+#include <cstdint>
+#include <vector>
+
+#include <reproc++/reproc.hpp>
 #endif
 
 namespace rui {
-
-#if defined(_WIN32)
-
-bool try_acquire_single_instance() {
-    // A named mutex is the idiomatic Windows single-instance primitive. The
-    // handle is intentionally leaked for the process lifetime; the OS frees
-    // it (and the name) when the process exits.
-    static HANDLE mutex = nullptr;
-    mutex = CreateMutexW(nullptr, TRUE, L"Local\\RockchipUniversalImagerSingleInstance");
-    if (mutex == nullptr) {
-        return true; // fail open
-    }
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(mutex);
-        mutex = nullptr;
-        return false;
-    }
-    return true;
-}
-
-void notify_already_running() {
-    MessageBoxW(nullptr,
-                L"Rockchip Universal Imager is already running.",
-                L"Rockchip Universal Imager",
-                MB_OK | MB_ICONINFORMATION);
-}
-
-#else
 
 bool try_acquire_single_instance() {
     // Held for the process lifetime: the fd is intentionally never closed on
@@ -77,13 +45,27 @@ bool try_acquire_single_instance() {
 }
 
 #if !defined(__APPLE__)
-// macOS provides a native (NSAlert) implementation in
-// single_instance_mac.mm; every other POSIX platform falls back to stderr.
+// macOS provides a native NSAlert in platform/macos/single_instance.mm.
 void notify_already_running() {
+    reproc::process process;
+    const std::vector<std::string> args = {
+        "zenity",
+        "--info",
+        "--title=Rockchip Universal Imager",
+        "--text=Rockchip Universal Imager is already running.\n\n"
+        "Only one instance can run at a time. Switch to the window that's already open.",
+        "--width=360",
+    };
+    reproc::options options;
+    if (!process.start(args, options)) {
+        const auto [status, wait_ec] = process.wait(reproc::infinite);
+        (void)status;
+        (void)wait_ec;
+        return;
+    }
+    // zenity missing or failed to start - fall back so the user still sees something.
     std::fprintf(stderr, "Rockchip Universal Imager is already running.\n");
 }
-#endif
-
 #endif
 
 } // namespace rui

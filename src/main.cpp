@@ -2,21 +2,16 @@
 #include <saucer/smartview.hpp>
 #include "core/rkdeveloptool_runner.h"
 #include "core/logging.h"
-#include "core/libusb-win32-helper.h"
+#include "core/device_access.h"
 #include "core/file_dialog.h"
+#include "core/file_drop.h"
 #include "core/loader_map.h"
 #include "core/executable_path.h"
 #include "core/gpt_probe.h"
-#include "core/macos_quit_guard.h"
+#include "core/open_path.h"
+#include "core/quit_guard.h"
 #include "core/single_instance.h"
 #include "core/usb_monitor.h"
-
-#ifdef __APPLE__
-#include "core/macos_file_drop.h"
-#endif
-#ifdef __linux__
-#include "core/udev_rules_helper.h"
-#endif
 
 #include <atomic>
 #include <algorithm>
@@ -36,10 +31,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-#ifndef _WIN32
-#include <reproc++/reproc.hpp>
-#endif
 
 #ifdef _WIN32
 
@@ -99,10 +90,12 @@ struct FilePickResult {
     std::uint64_t size_bytes = 0;
 };
 
-struct DriverInfoResult {
-    bool found = false;
-    bool ok = false;
-    std::string driver;
+struct DeviceAccessInfoResult {
+    // "none" | "windows_driver" | "linux_udev"
+    std::string kind;
+    bool device_relevant = true;
+    bool ready = true;
+    std::string detail;
     std::string error;
 };
 
@@ -715,33 +708,7 @@ void update_flash_progress(const std::shared_ptr<saucer::smartview>& view, int p
     view->execute("window.updateFlashProgress && window.updateFlashProgress({})", clamped);
 }
 
-// Reveal a directory in the OS file manager (Finder / Explorer / the default
-// XDG file manager). Best-effort: returns false if the opener couldn't be
-// launched or reported failure.
-bool open_path_in_file_manager(const std::string& path) {
-#if defined(_WIN32)
-    // ShellExecuteA takes the native narrow (ANSI) path that path.string()
-    // produces on Windows; ">32" is the documented success threshold.
-    const HINSTANCE result =
-        ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(result) > 32;
-#else
-#if defined(__APPLE__)
-    std::vector<std::string> args = {"open", path};
-#else
-    std::vector<std::string> args = {"xdg-open", path};
-#endif
-    reproc::process process;
-    reproc::options options;
-    if (process.start(args, options)) {
-        return false;
-    }
-    // These launchers hand off to the file manager and exit promptly, so
-    // waiting is cheap and lets us report a real failure (non-zero exit).
-    const auto [status, wait_ec] = process.wait(reproc::infinite);
-    return !wait_ec && status == 0;
-#endif
-}
+
 
 std::optional<std::string> loader_path_for_vid(unsigned short vid, unsigned short pid, std::string& error) {
     for (size_t i = 0; i < kLoaderMapSize; ++i) {
@@ -927,7 +894,10 @@ bool cancel_flash_task() {
     return true;
 }
 
-bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const std::string& device_name) {
+// Platform device-access install (Windows libusb-win32 / Linux udev) on a
+// worker thread. Same running flag and completion callback on every OS.
+bool start_device_access_install(const std::shared_ptr<saucer::smartview>& view,
+                                const std::string& device_name) {
     bool expected = false;
     if (!g_driver_install_running.compare_exchange_strong(expected, true)) {
         return false;
@@ -935,9 +905,9 @@ bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const 
 
     std::weak_ptr<saucer::smartview> weak_view = view;
     std::thread worker([weak_view, device_name]() {
-        usb_driver::InstallOptions options;
+        device_access::InstallOptions options;
         options.device_name = device_name;
-        const auto result = usb_driver::install_libusb_win32(options);
+        const auto result = device_access::install(options);
         g_driver_install_running.store(false);
 
         if (!g_webview_alive.load()) {
@@ -961,40 +931,17 @@ bool start_driver_install(const std::shared_ptr<saucer::smartview>& view, const 
     return true;
 }
 
-#ifdef __linux__
-// The Linux analog of the Windows driver install: writes the Rockchip udev
-// rule via pkexec on a worker thread. Reuses the driver-install running flag,
-// thread slot, and completion callback - the two can't run concurrently and
-// the UI treats them as the same "device access setup" action.
-bool start_udev_rules_install(const std::shared_ptr<saucer::smartview>& view) {
-    bool expected = false;
-    if (!g_driver_install_running.compare_exchange_strong(expected, true)) {
-        return false;
+std::string device_access_kind_string(device_access::Kind kind) {
+    switch (kind) {
+    case device_access::Kind::windows_driver:
+        return "windows_driver";
+    case device_access::Kind::linux_udev:
+        return "linux_udev";
+    case device_access::Kind::none:
+    default:
+        return "none";
     }
-
-    std::weak_ptr<saucer::smartview> weak_view = view;
-    std::thread worker([weak_view]() {
-        const auto result = udev_rules::install();
-        g_driver_install_running.store(false);
-
-        if (!g_webview_alive.load()) {
-            return;
-        }
-        if (auto view = weak_view.lock()) {
-            const OperationResult payload{result.success, false, result.error_message};
-            view->execute("window.onDriverInstallComplete && window.onDriverInstallComplete({})", payload);
-        }
-    });
-
-    std::lock_guard<std::mutex> lock(g_driver_install_mutex);
-    if (g_driver_install_thread.joinable()) {
-        g_driver_install_thread.join();
-    }
-    g_driver_install_thread = std::move(worker);
-
-    return true;
 }
-#endif
 
 coco::stray run_app(saucer::application* app) {
     auto window = saucer::window::create(app).value();
@@ -1056,17 +1003,14 @@ coco::stray run_app(saucer::application* app) {
 
     webview->expose("openLogDirectory", []() {
         const std::string dir = logging::log_directory();
-        if (dir.empty() || !open_path_in_file_manager(dir)) {
+        if (dir.empty() || !rui::open_path_in_file_manager(dir)) {
             return OpenResult{false, "could not open log folder"};
         }
         return OpenResult{true, ""};
     });
 
-    // saucer's window.saucer.exposed is a JS Proxy that returns a callable
-    // stub for *any* property name regardless of whether it was actually
-    // registered here, so the frontend can't detect platform-only endpoints
-    // (installUsbDriver/installUdevRules) by truthiness-checking them. Expose
-    // an explicit platform name instead.
+    // Explicit platform name for any UI that still wants OS labels; device
+    // access setup uses getDeviceAccessInfo().kind instead of per-OS endpoints.
     webview->expose("getPlatform", []() -> std::string {
 #if defined(_WIN32)
         return "windows";
@@ -1113,35 +1057,24 @@ coco::stray run_app(saucer::application* app) {
         return result;
     });
 
-#ifdef _WIN32
-    webview->expose("getUsbDriverInfo", []() {
-        const auto info = usb_driver::query_driver();
-        return DriverInfoResult{info.device_found, info.is_libusb_win32, info.driver_name, info.error_message};
+    webview->expose("getDeviceAccessInfo", []() {
+        const auto info = device_access::query();
+        return DeviceAccessInfoResult{
+            device_access_kind_string(info.kind),
+            info.device_relevant,
+            info.ready,
+            info.detail,
+            info.error,
+        };
     });
 
-    webview->expose("installUsbDriver", [weak_webview](const std::string& device_name) {
+    webview->expose("installDeviceAccess", [weak_webview](const std::string& device_name) {
         auto view = weak_webview.lock();
-        if (!view || !start_driver_install(view, device_name)) {
-            return StartResult{false, "driver install already in progress"};
-        }
-        return StartResult{true, ""};
-    });
-#endif
-
-#ifdef __linux__
-    webview->expose("getUdevRulesInfo", []() {
-        const auto info = udev_rules::query();
-        return DriverInfoResult{true, info.installed, info.installed ? "installed" : "", info.error};
-    });
-
-    webview->expose("installUdevRules", [weak_webview]() {
-        auto view = weak_webview.lock();
-        if (!view || !start_udev_rules_install(view)) {
+        if (!view || !start_device_access_install(view, device_name)) {
             return StartResult{false, "install already in progress"};
         }
         return StartResult{true, ""};
     });
-#endif
 
     webview->expose("selectImageFile", []() {
         std::string error;
@@ -1503,10 +1436,8 @@ coco::stray run_app(saucer::application* app) {
         g_webview_alive.store(false);
     });
 
-#ifdef __APPLE__
-    // Cmd+Q / the app menu's Quit item never reach window::event::close (see
-    // macos_quit_guard.h) - cover that path separately, using the same
-    // g_flash_running/g_force_quit checks and the same JS-side prompt.
+    // On macOS, Cmd+Q / the app menu Quit item never reach window::event::close
+    // (see core/quit_guard.h). No-op on other platforms.
     rui::install_quit_guard(
         [] { return g_flash_running.load() && !g_lazy_probe_running.load() && !g_force_quit.load(); },
         [weak_webview_for_close]() {
@@ -1516,12 +1447,9 @@ coco::stray run_app(saucer::application* app) {
                 }
             }
         });
-#endif
 
-#ifdef __APPLE__
-    // Native drop target for .img files (WKWebView can't hand a dropped
-    // file's path to JS). Weak capture for the same self-cycle reason as the
-    // expose handlers above.
+    // Native .img path drop where supported (macOS); no-op elsewhere.
+    // Weak capture for the same self-cycle reason as the expose handlers above.
     rui::install_file_drop_target(window, [weak_webview](const std::string& path) {
         if (!g_webview_alive.load()) {
             return;
@@ -1535,7 +1463,6 @@ coco::stray run_app(saucer::application* app) {
         const FilePickResult payload{true, path, "", size_ec ? 0 : static_cast<std::uint64_t>(size)};
         view->execute("window.onImageFileDropped && window.onImageFileDropped({})", payload);
     });
-#endif
 
     window->set_title("Rockchip Universal Imager");
     window->set_size({.w = 800, .h = 600});
@@ -1599,12 +1526,10 @@ coco::stray run_app(saucer::application* app) {
 } // namespace
 
 int run_application() {
-#ifdef _WIN32
     int exit_code = 0;
-    if (win_driver::try_handle_driver_install_cli(exit_code)) {
+    if (device_access::try_handle_elevated_cli(exit_code)) {
         return exit_code;
     }
-#endif
 
     // Refuse to start a second instance: two copies would each drive
     // rkdeveloptool against the same device, and libusb interface claims are

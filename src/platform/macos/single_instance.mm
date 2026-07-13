@@ -7,6 +7,8 @@ namespace rui {
 // Native alert for the early-exit path. Runs before saucer creates its own
 // application, so ensure the shared NSApplication exists first; NSAlert spins
 // its own modal loop, so no running event loop is required.
+//
+// Lock acquisition lives in platform/posix/single_instance.cpp (flock).
 void notify_already_running() {
     @autoreleasepool {
         [NSApplication sharedApplication];

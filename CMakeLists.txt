@@ -156,6 +156,9 @@ endif()
 
 add_executable(rockchip-universal-imager WIN32)
 
+# Platform-neutral sources and headers live under src/core/. Non-trivial OS
+# bodies live under src/platform/{windows,posix,macos,linux}/ — prefer a
+# Windows vs POSIX split when macOS and Linux share an implementation.
 target_sources(rockchip-universal-imager PRIVATE
     src/main.cpp
     src/core/executable_path.cpp
@@ -164,26 +167,38 @@ target_sources(rockchip-universal-imager PRIVATE
     src/core/rkdeveloptool_runner.h
     src/core/logging.cpp
     src/core/logging.h
-    src/core/libusb-win32-helper.cpp
-    src/core/libusb-win32-helper.h
-    src/core/file_dialog.cpp
+    src/core/device_access.h
     src/core/file_dialog.h
+    src/core/file_drop.h
     src/core/gpt_probe.cpp
     src/core/gpt_probe.h
     src/core/loader_map.h
-    src/core/macos_quit_guard.h
-    src/core/single_instance.cpp
+    src/core/open_path.h
+    src/core/quit_guard.h
     src/core/single_instance.h
-    src/core/usb_monitor.cpp
     src/core/usb_monitor.h
 )
 
-if(APPLE)
+if(WIN32)
     target_sources(rockchip-universal-imager PRIVATE
-        src/core/macos_quit_guard.mm
-        src/core/single_instance_mac.mm
-        src/core/macos_file_drop.h
-        src/core/macos_file_drop.mm
+        src/platform/windows/device_access.cpp
+        src/platform/windows/file_dialog.cpp
+        src/platform/windows/file_drop.cpp
+        src/platform/windows/open_path.cpp
+        src/platform/windows/quit_guard.cpp
+        src/platform/windows/single_instance.cpp
+        src/platform/windows/usb_monitor.cpp
+    )
+elseif(APPLE)
+    target_sources(rockchip-universal-imager PRIVATE
+        src/platform/macos/device_access.cpp
+        src/platform/macos/file_dialog.cpp
+        src/platform/macos/file_drop.mm
+        src/platform/macos/quit_guard.mm
+        src/platform/macos/single_instance.mm
+        src/platform/posix/open_path.cpp
+        src/platform/posix/single_instance.cpp
+        src/platform/posix/usb_monitor.cpp
     )
 
     # A real .app bundle: double-clicking a bare Unix executable in Finder
@@ -194,18 +209,19 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/packaging/macos/Info.plist"
     )
-endif()
-
-if(UNIX AND NOT APPLE)
+else()
     target_sources(rockchip-universal-imager PRIVATE
-        src/core/udev_rules_helper.cpp
-        src/core/udev_rules_helper.h
+        src/platform/linux/device_access.cpp
+        src/platform/linux/file_dialog.cpp
+        src/platform/posix/file_drop.cpp
+        src/platform/posix/open_path.cpp
+        src/platform/posix/quit_guard.cpp
+        src/platform/posix/single_instance.cpp
+        src/platform/posix/usb_monitor.cpp
     )
 endif()
 
-# libusb: used directly by the app for hotplug-based device detection
-# (usb_monitor.cpp). Windows is intentionally not wired up yet - it would need
-# a WM_DEVICECHANGE path since libusb has no hotplug support there.
+# libusb: used by the POSIX usb_monitor (hotplug). Windows uses WM_DEVICECHANGE.
 if(NOT WIN32)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
@@ -252,10 +268,10 @@ if(TARGET rockchip-universal-imager)
 endif()
 
 if(WIN32)
-    # shell32: ShellExecute (open log folder). setupapi: USB device
-    # enumeration; user32: message-only window + RegisterDeviceNotification for
-    # native WM_DEVICECHANGE-based detection (usb_monitor.cpp).
-    target_link_libraries(rockchip-universal-imager PRIVATE shell32 setupapi user32)
+    # shell32: ShellExecute (open log folder). comdlg32: open/save file dialogs.
+    # setupapi: USB device enumeration; user32: message-only window +
+    # RegisterDeviceNotification for native WM_DEVICECHANGE detection.
+    target_link_libraries(rockchip-universal-imager PRIVATE shell32 comdlg32 setupapi user32)
     option(LIBWDI_ENABLE "Build libwdi with native MSVC sources" ON)
     set(LIBWDI_REPO "https://github.com/pbatard/libwdi.git" CACHE STRING "libwdi repository URL")
     set(LIBWDI_TAG "v1.5.0" CACHE STRING "libwdi git tag or branch")

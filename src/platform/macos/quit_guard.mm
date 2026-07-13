@@ -1,4 +1,4 @@
-#include "core/macos_quit_guard.h"
+#include "core/quit_guard.h"
 
 #import <Cocoa/Cocoa.h>
 

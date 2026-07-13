@@ -413,28 +413,34 @@ async function refreshDependencyWarning() {
 }
 
 async function refreshDriverInfo() {
-    const platform = await platformReady;
-    if (platform === "windows" && api && api.getUsbDriverInfo) {
-        const info = await api.getUsbDriverInfo();
-        if (!info.found) {
-            driverStatus.textContent = info.error || "device not found";
+    if (!api || !api.getDeviceAccessInfo) {
+        return;
+    }
+    try {
+        const info = await api.getDeviceAccessInfo();
+        if (!info || info.kind === "none") {
             return;
         }
-        if (info.ok) {
-            driverStatus.textContent = "Driver: " + (info.driver || "libusb-win32");
-        } else {
-            driverStatus.textContent = info.error || ("Driver: " + (info.driver || "unknown"));
+        if (info.kind === "windows_driver") {
+            if (!info.device_relevant) {
+                driverStatus.textContent = info.error || "device not found";
+                return;
+            }
+            if (info.ready) {
+                driverStatus.textContent = "Driver: " + (info.detail || "libusb-win32");
+            } else {
+                driverStatus.textContent = info.error || ("Driver: " + (info.detail || "unknown"));
+            }
+            return;
         }
-        return;
+        if (info.kind === "linux_udev") {
+            driverStatus.textContent = info.ready
+                ? "udev rules: installed"
+                : (info.error || "udev rules: not installed — flashing may need root");
+        }
+    } catch (error) {
+        // ignore; status line is best-effort
     }
-    if (platform === "linux" && api && api.getUdevRulesInfo) {
-        const info = await api.getUdevRulesInfo();
-        driverStatus.textContent = info.ok
-            ? "udev rules: installed"
-            : (info.error || "udev rules: not installed — flashing may need root");
-        return;
-    }
-    // macOS uses libusb directly; there's nothing to report.
 }
 
 async function refreshStorageInfo() {
@@ -619,7 +625,7 @@ selectImage.addEventListener("click", async () => {
     applyImageSelection(result.path, result.size_bytes);
 });
 
-// Native side (macOS) delivers Finder drops of a single .img here.
+// Native host (where supported) delivers OS file drops of a single .img here.
 window.onImageFileDropped = (result) => {
     if (!result || !result.success || !result.path) {
         return;
@@ -843,41 +849,43 @@ async function initDriverInstallUi() {
     if (!installDriver) {
         return;
     }
-    const platform = await platformReady;
-    if (platform === "windows" && api && api.installUsbDriver) {
-        installDriver.addEventListener("click", async () => {
-            if (driverInstallRunning) {
-                return;
-            }
-            setDriverInstallRunning(true);
-            const result = await api.installUsbDriver(driverDeviceName);
-            if (!result.started) {
-                setDriverInstallRunning(false);
-                driverStatus.textContent = result.error || "driver install already in progress";
-            }
-        });
+    if (!api || !api.getDeviceAccessInfo || !api.installDeviceAccess) {
+        installDriver.style.display = "none";
+        driverStatus.style.display = "none";
         return;
     }
-    if (platform === "linux" && api && api.installUdevRules) {
+    let kind = "none";
+    try {
+        const info = await api.getDeviceAccessInfo();
+        kind = (info && info.kind) || "none";
+    } catch (error) {
+        kind = "none";
+    }
+    if (kind === "none") {
+        installDriver.style.display = "none";
+        driverStatus.style.display = "none";
+        return;
+    }
+    if (kind === "linux_udev") {
         installDriver.textContent = "Install udev rules";
-        refreshDriverInfo();
-        installDriver.addEventListener("click", async () => {
-            if (driverInstallRunning) {
-                return;
-            }
-            setDriverInstallRunning(true);
-            driverStatus.textContent = "Installing udev rules... (system authorization required)";
-            const result = await api.installUdevRules();
-            if (!result.started) {
-                setDriverInstallRunning(false);
-                driverStatus.textContent = result.error || "install already in progress";
-            }
-        });
-        return;
+    } else if (kind === "windows_driver") {
+        installDriver.textContent = "Install libusb-win32";
     }
-    // macOS talks to the device via libusb directly - no driver setup exists.
-    installDriver.style.display = "none";
-    driverStatus.style.display = "none";
+    refreshDriverInfo();
+    installDriver.addEventListener("click", async () => {
+        if (driverInstallRunning) {
+            return;
+        }
+        setDriverInstallRunning(true);
+        if (kind === "linux_udev") {
+            driverStatus.textContent = "Installing udev rules... (system authorization required)";
+        }
+        const result = await api.installDeviceAccess(driverDeviceName);
+        if (!result.started) {
+            setDriverInstallRunning(false);
+            driverStatus.textContent = result.error || "install already in progress";
+        }
+    });
 }
 
 initDriverInstallUi();

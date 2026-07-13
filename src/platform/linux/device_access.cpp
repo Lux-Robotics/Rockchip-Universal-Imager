@@ -1,4 +1,5 @@
-#include "core/udev_rules_helper.h"
+#include "core/device_access.h"
+#include "core/logging.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -9,9 +10,7 @@
 #include <reproc++/drain.hpp>
 #include <reproc++/reproc.hpp>
 
-#include "core/logging.h"
-
-namespace udev_rules {
+namespace device_access {
 namespace {
 
 constexpr const char* kRulesPath = "/etc/udev/rules.d/99-rockchip-universal-imager-rockchip.rules";
@@ -27,17 +26,26 @@ constexpr const char* kRulesContent =
 
 } // namespace
 
-RulesInfo query() {
-    RulesInfo info;
+Status query() {
+    Status status;
+    status.kind = Kind::linux_udev;
+    status.device_relevant = true;
     std::error_code ec;
-    info.installed = std::filesystem::exists(kRulesPath, ec);
+    const bool installed = std::filesystem::exists(kRulesPath, ec);
     if (ec) {
-        info.error = "could not check udev rules: " + ec.message();
+        status.ready = false;
+        status.error = "could not check udev rules: " + ec.message();
+        return status;
     }
-    return info;
+    status.ready = installed;
+    status.detail = installed ? "installed" : "";
+    if (!installed) {
+        status.error = "udev rules: not installed — flashing may need root";
+    }
+    return status;
 }
 
-InstallResult install() {
+InstallResult install(const InstallOptions& /*options*/) {
     logging::write("app", "Installing udev rules via pkexec");
 
     const std::string script = std::string("printf '%s' '") + kRulesContent + "' > " + kRulesPath +
@@ -73,23 +81,23 @@ InstallResult install() {
             return {};
         });
 
-    auto [status, wait_ec] = process.wait(reproc::infinite);
+    auto [status_code, wait_ec] = process.wait(reproc::infinite);
     if (wait_ec) {
         result.error_message = "pkexec wait failed: " + wait_ec.message();
         return result;
     }
     // pkexec's own exit codes: 126 = auth dialog dismissed, 127 = not
     // authorized / pkexec failure.
-    if (status == 126 || status == 127) {
+    if (status_code == 126 || status_code == 127) {
         result.error_message = "authorization was dismissed";
         return result;
     }
-    if (status != 0) {
+    if (status_code != 0) {
         while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
             output.pop_back();
         }
         result.error_message = output.empty()
-            ? "udev rules install failed (exit " + std::to_string(status) + ")"
+            ? "udev rules install failed (exit " + std::to_string(status_code) + ")"
             : output;
         return result;
     }
@@ -99,4 +107,8 @@ InstallResult install() {
     return result;
 }
 
-} // namespace udev_rules
+bool try_handle_elevated_cli(int& /*exit_code*/) {
+    return false;
+}
+
+} // namespace device_access
