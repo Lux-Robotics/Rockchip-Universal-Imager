@@ -1,9 +1,13 @@
 # Build rkdeveloptool for six targets (own-OS + arm64 on each runner).
 #
-# Runners (self-hosted labels):
-#   ubuntu-24      → linux-x86_64,  linux-aarch64
-#   windows-11     → windows-x86_64, windows-aarch64
-#   macos-sequoia  → macos-x86_64,  macos-aarch64
+# Runners: selected by GitHub’s automatic self-hosted labels only
+# (no custom hostnames — any machine with matching OS+arch works):
+#
+#   [self-hosted, Linux,  X64] → linux-x86_64,  linux-aarch64
+#   [self-hosted, Windows, X64] → windows-x86_64, windows-aarch64
+#   [self-hosted, macOS,  X64] → macos-x86_64,  macos-aarch64
+#
+# (If you add an ARM64 host later, add matrix rows with [self-hosted, <OS>, ARM64].)
 #
 # Upstream build (from rkdeveloptool Readme):
 #   ./autogen.sh && ./configure && make
@@ -32,16 +36,6 @@
 name: Build rkdeveloptool
 
 on:
-  push:
-    branches: [main, master, "port/**", "ci/**"]
-    paths:
-      - "dependencies/rkdeveloptool/**"
-      - ".github/workflows/build-rkdeveloptool.yaml"
-      - "packaging/**/bootstrap-build-deps.*"
-  pull_request:
-    paths:
-      - "dependencies/rkdeveloptool/**"
-      - ".github/workflows/build-rkdeveloptool.yaml"
   workflow_dispatch:
 
 concurrency:
@@ -64,41 +58,41 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- ubuntu-24: Linux only ---
-          - runner: ubuntu-24
+          # --- Linux X64 host: Linux products only ---
+          - runner: [self-hosted, Linux, X64]
             os_label: linux
             arch_label: x86_64
             host_triple: x86_64-linux-gnu
             cross: false
-          - runner: ubuntu-24
+          - runner: [self-hosted, Linux, X64]
             os_label: linux
             arch_label: aarch64
             host_triple: aarch64-linux-gnu
             cross: true
 
-          # --- windows-11: Windows only ---
-          - runner: windows-11
+          # --- Windows X64 host: Windows products only ---
+          - runner: [self-hosted, Windows, X64]
             os_label: windows
             arch_label: x86_64
             host_triple: x86_64-w64-mingw32
             cross: false
-          - runner: windows-11
+          - runner: [self-hosted, Windows, X64]
             os_label: windows
             arch_label: aarch64
             host_triple: aarch64-w64-mingw32
             cross: true
 
-          # --- macos-sequoia: macOS only ---
-          - runner: macos-sequoia
+          # --- macOS X64 host: macOS products only ---
+          - runner: [self-hosted, macOS, X64]
             os_label: macos
             arch_label: x86_64
             host_triple: x86_64-apple-darwin
-            cross: true
-          - runner: macos-sequoia
+            cross: false
+          - runner: [self-hosted, macOS, X64]
             os_label: macos
             arch_label: aarch64
             host_triple: aarch64-apple-darwin
-            cross: false
+            cross: true
 
     steps:
       - name: Checkout

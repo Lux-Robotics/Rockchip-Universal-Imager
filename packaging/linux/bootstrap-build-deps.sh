@@ -2,7 +2,7 @@
 # Bootstrap Linux build-server deps for Rockchip Universal Imager + rkdeveloptool.
 #
 # Debian/Ubuntu (apt). Run over SSH as a sudo-capable user (not as root for rustup).
-# Target runner label (self-hosted): ubuntu-24
+# Self-hosted selection: [self-hosted, Linux, X64] (any hostname, e.g. Ubuntu-24)
 #
 #   bash packaging/linux/bootstrap-build-deps.sh
 #   bash packaging/linux/bootstrap-build-deps.sh --skip-tauri-cli

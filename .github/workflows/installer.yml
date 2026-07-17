@@ -13,15 +13,17 @@
 # ---------------------------------------------------------------------------
 # Runner model
 # ---------------------------------------------------------------------------
-# Self-hosted only. Each machine builds *its own OS only*, for the host arch
-# plus aarch64 (cross when the runner is x86_64).
+# Self-hosted only. Each machine builds *its own OS only*, for native X64
+# plus aarch64 cross (hosts are X64).
 #
-#   Linux runner  → linux-x86_64,  linux-aarch64
-#   Windows runner → windows-x86_64, windows-aarch64
-#   macOS runner  → macos-x86_64,  macos-aarch64
+#   [self-hosted, Linux,  X64] → linux-x86_64,  linux-aarch64
+#   [self-hosted, Windows, X64] → windows-x86_64, windows-aarch64
+#   [self-hosted, macOS,  X64] → macos-x86_64,  macos-aarch64
 #
-# Labels used: [self-hosted, Linux] | [self-hosted, Windows] | [self-hosted, macOS]
-# (GitHub’s default OS labels on self-hosted runners.)
+# Labels (GitHub automatic only — no custom hostnames):
+#   [self-hosted, Linux, X64] | [self-hosted, Windows, X64] | [self-hosted, macOS, X64]
+# Matches any self-hosted runner with that OS + arch (e.g. Ubuntu-24, Windows-11,
+# MacOS-Sequoia-CICD) without naming them.
 #
 # ---------------------------------------------------------------------------
 # Pre-installed system dependencies (DO NOT install in this workflow)
@@ -63,9 +65,6 @@
 name: Installer
 
 on:
-  push:
-    branches: [main, master, "port/**", "ci/**"]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -87,15 +86,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- Linux runner: Linux only (host + aarch64) ---
-          - runner: [self-hosted, Linux]
+          # --- Linux X64 host: Linux only (native + aarch64 cross) ---
+          - runner: [self-hosted, Linux, X64]
             os_label: linux
             arch_label: x86_64
             rust_target: x86_64-unknown-linux-gnu
             app_name: rockchip-universal-imager
             rk_name: rkdeveloptool
             cross: false
-          - runner: [self-hosted, Linux]
+          - runner: [self-hosted, Linux, X64]
             os_label: linux
             arch_label: aarch64
             rust_target: aarch64-unknown-linux-gnu
@@ -103,15 +102,15 @@ jobs:
             rk_name: rkdeveloptool
             cross: true
 
-          # --- Windows runner: Windows only (host + aarch64) ---
-          - runner: [self-hosted, Windows]
+          # --- Windows X64 host: Windows only (native + aarch64 cross) ---
+          - runner: [self-hosted, Windows, X64]
             os_label: windows
             arch_label: x86_64
             rust_target: x86_64-pc-windows-msvc
             app_name: rockchip-universal-imager.exe
             rk_name: rkdeveloptool.exe
             cross: false
-          - runner: [self-hosted, Windows]
+          - runner: [self-hosted, Windows, X64]
             os_label: windows
             arch_label: aarch64
             rust_target: aarch64-pc-windows-msvc
@@ -119,21 +118,21 @@ jobs:
             rk_name: rkdeveloptool.exe
             cross: true
 
-          # --- macOS runner: macOS only (host + aarch64) ---
-          - runner: [self-hosted, macOS]
+          # --- macOS X64 host: macOS only (native + aarch64 cross) ---
+          - runner: [self-hosted, macOS, X64]
             os_label: macos
             arch_label: x86_64
             rust_target: x86_64-apple-darwin
             app_name: rockchip-universal-imager
             rk_name: rkdeveloptool
-            cross: true
-          - runner: [self-hosted, macOS]
+            cross: false
+          - runner: [self-hosted, macOS, X64]
             os_label: macos
             arch_label: aarch64
             rust_target: aarch64-apple-darwin
             app_name: rockchip-universal-imager
             rk_name: rkdeveloptool
-            cross: false
+            cross: true
 
     steps:
       - name: Checkout

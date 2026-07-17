@@ -113,9 +113,9 @@ Each OS runner builds **that OS only**, for host arch **and** aarch64:
 
 | Runner label | Artifacts |
 |--------------|-----------|
-| `[self-hosted, Linux]` | `linux-x86_64`, `linux-aarch64` |
-| `[self-hosted, Windows]` | `windows-x86_64`, `windows-aarch64` |
-| `[self-hosted, macOS]` | `macos-x86_64`, `macos-aarch64` |
+| `[self-hosted, Linux, X64]` | `linux-x86_64`, `linux-aarch64` |
+| `[self-hosted, Windows, X64]` | `windows-x86_64`, `windows-aarch64` |
+| `[self-hosted, macOS, X64]` | `macos-x86_64`, `macos-aarch64` |
 
 Per matrix cell:
 

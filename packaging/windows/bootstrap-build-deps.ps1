@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   Run in an elevated PowerShell (Run as Administrator) on the Windows CI host.
-  Target runner label: windows-11
+  Self-hosted selection: [self-hosted, Windows, X64] (any hostname, e.g. Windows-11)
 
     Set-ExecutionPolicy -Scope Process Bypass -Force
     .\packaging\windows\bootstrap-build-deps.ps1

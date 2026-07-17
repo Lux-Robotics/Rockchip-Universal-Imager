@@ -2,7 +2,8 @@
 # Bootstrap macOS build-server deps for Rockchip Universal Imager + rkdeveloptool.
 #
 # Safe over SSH (non-interactive where possible). Run as a normal admin user
-# that can use Homebrew (not root). Target runner label: macos-sequoia
+# that can use Homebrew (not root).
+# Self-hosted selection: [self-hosted, macOS, X64] (any hostname, e.g. MacOS-Sequoia-CICD)
 #
 #   bash packaging/macos/bootstrap-build-deps.sh
 #   bash packaging/macos/bootstrap-build-deps.sh --skip-tauri-cli
