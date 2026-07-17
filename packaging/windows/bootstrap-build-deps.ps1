@@ -169,9 +169,9 @@ function Install-Msys2 {
     }
     if (-not (Test-Path $Bash)) {
         $installer = Join-Path $env:TEMP "msys2-x86_64-latest.exe"
-        Write-Step "Downloading MSYS2 installer…"
+        Write-Step "Downloading MSYS2 installer..."
         Invoke-WebRequest -Uri "https://github.com/msys2/msys2-installer/releases/latest/download/msys2-x86_64-latest.exe" -OutFile $installer
-        Write-Step "Running MSYS2 unattended install…"
+        Write-Step "Running MSYS2 unattended install..."
         Start-Process -FilePath $installer -ArgumentList @("install", "--root", $MsysRoot, "--confirm-command") -Wait
     }
     if (-not (Test-Path $Bash)) {
@@ -247,10 +247,12 @@ if (-not $SkipLlvmMingw) {
         if (-not $inner) { throw "llvm-mingw zip layout unexpected" }
         if (Test-Path $LlvmMingwRoot) { Remove-Item -Recurse -Force $LlvmMingwRoot }
         Move-Item $inner.FullName $LlvmMingwRoot
-        # Machine PATH
+        # Machine PATH (Join-Path avoids "$var\bin" parse issues in some hosts/encodings)
+        $llvmBin = Join-Path $LlvmMingwRoot "bin"
         $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-        if ($machinePath -notlike "*$LlvmMingwRoot\bin*") {
-            [Environment]::SetEnvironmentVariable("Path", "$machinePath;$LlvmMingwRoot\bin", "Machine")
+        if ($machinePath -notlike ("*{0}*" -f $llvmBin)) {
+            $newPath = if ([string]::IsNullOrEmpty($machinePath)) { $llvmBin } else { $machinePath + ";" + $llvmBin }
+            [Environment]::SetEnvironmentVariable("Path", $newPath, "Machine")
         }
         Refresh-Path
     }
@@ -266,7 +268,7 @@ function Install-Rust {
     $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
     $rustup = Join-Path $cargoBin "rustup.exe"
     if (-not (Test-Path $rustup)) {
-        Write-Step "Installing rustup…"
+        Write-Step "Installing rustup..."
         $rustupInit = Join-Path $env:TEMP "rustup-init.exe"
         Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile $rustupInit
         & $rustupInit -y --default-toolchain stable --profile default
@@ -275,7 +277,7 @@ function Install-Rust {
         Write-Step "rustup already present"
     }
     Refresh-Path
-    $env:Path = "$cargoBin;$env:Path"
+    $env:Path = $cargoBin + ";" + $env:Path
 
     Write-Step "Updating stable + Windows MSVC targets (x64 + arm64)"
     & rustup toolchain install stable --profile default
