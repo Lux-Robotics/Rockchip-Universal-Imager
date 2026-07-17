@@ -2,20 +2,36 @@
 # Bootstrap Linux build-server deps for Rockchip Universal Imager + rkdeveloptool.
 #
 # Debian/Ubuntu (apt). Run over SSH as a sudo-capable user (not as root for rustup).
+# Target runner label (self-hosted): ubuntu-24
 #
 #   bash packaging/linux/bootstrap-build-deps.sh
 #   bash packaging/linux/bootstrap-build-deps.sh --skip-tauri-cli
 #   bash packaging/linux/bootstrap-build-deps.sh --skip-cross
 #
-# Installs:
-#   - build-essential, pkg-config, autoconf, automake, libtool
-#   - libusb-1.0-0-dev, libudev-dev, libssl-dev
-#   - Tauri/WebKit GTK stack (webkit2gtk-4.1, appindicator, rsvg, patchelf)
-#   - git, curl, wget, file, zip, unzip
-#   - aarch64 cross toolchain (optional: --skip-cross)
-#   - rustup + stable
-#   - Rust targets: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
-#   - cargo install tauri-cli ^2 (optional: --skip-tauri-cli)
+# ---------------------------------------------------------------------------
+# Runner expectations (workflows assume these are pre-installed)
+# ---------------------------------------------------------------------------
+# Used by:
+#   .github/workflows/build-rkdeveloptool.yaml  (linux-x86_64, linux-aarch64)
+#   .github/workflows/portable.yml / installer.yml
+#
+# Required for rkdeveloptool (autogen + configure + make):
+#   - build-essential (gcc, g++, make)
+#   - pkg-config, autoconf, automake, libtool, m4, dh-autoreconf
+#   - libusb-1.0-0-dev, libudev-dev  (headers + static .a when available)
+#   - curl, wget, tar, bzip2          (fetch/build libusb from source if needed)
+#   - git, zip, unzip, file, ca-certificates
+#   - aarch64 cross (unless --skip-cross):
+#       gcc-aarch64-linux-gnu, g++-aarch64-linux-gnu, binutils-aarch64-linux-gnu,
+#       libc6-dev-arm64-cross
+#
+# Required for Tauri app (portable/installer):
+#   - libssl-dev
+#   - libwebkit2gtk-4.1-dev, libayatana-appindicator3-dev, librsvg2-dev, patchelf
+#   - rustup + stable (1.85+), targets x86_64-unknown-linux-gnu (+ aarch64)
+#   - tauri-cli ^2 (optional: --skip-tauri-cli; CI can cargo-install)
+#
+# Installs all of the above.
 #
 set -euo pipefail
 
@@ -68,7 +84,7 @@ install_apt_packages() {
   sudo apt-get update
 
   local pkgs=(
-    # core build
+    # core build (rkdeveloptool + Tauri)
     build-essential
     curl
     wget
@@ -79,8 +95,13 @@ install_apt_packages() {
     autoconf
     automake
     libtool
+    libtool-bin
+    m4
+    dh-autoreconf
     make
-    # packaging
+    # libusb source tarball (.tar.bz2) + packaging
+    tar
+    bzip2
     zip
     unzip
     # USB / crypto for app + rkdeveloptool
@@ -98,6 +119,7 @@ install_apt_packages() {
     pkgs+=(
       gcc-aarch64-linux-gnu
       g++-aarch64-linux-gnu
+      binutils-aarch64-linux-gnu
       # headers for native multiarch where available (best-effort)
       libc6-dev-arm64-cross
     )
@@ -106,14 +128,15 @@ install_apt_packages() {
   log "Installing apt packages…"
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${pkgs[@]}"
 
-  # Optional: multiarch libusb for linking aarch64 targets (may not exist on all releases)
+  # Optional: multiarch libusb for linking aarch64 targets (may not exist on all releases).
+  # build-rkdeveloptool.yaml usually builds libusb from source for linux-aarch64 instead.
   if [[ "$SKIP_CROSS" -eq 0 ]]; then
     log "Attempting aarch64 multiarch libusb (best-effort)…"
     sudo dpkg --add-architecture arm64 || true
     sudo apt-get update || true
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       libusb-1.0-0-dev:arm64 2>/dev/null || \
-      echo "  (skipped libusb:arm64 — install a sysroot later if cross-link fails)"
+      echo "  (skipped libusb:arm64 — CI builds libusb from source for cross)"
   fi
 }
 
@@ -196,13 +219,19 @@ verify() {
   check "g++"            have g++
   check "make"           have make
   check "git"            have git
+  check "curl"           have curl
+  check "bzip2"          have bzip2
+  check "tar"            have tar
   check "pkg-config"     have pkg-config
   check "libusb (pc)"    pkg-config --exists libusb-1.0
   check "libudev (pc)"   pkg-config --exists libudev
+  check "libusb static"  bash -c 'd=$(pkg-config --variable=libdir libusb-1.0 2>/dev/null); [[ -n "$d" && -f "$d/libusb-1.0.a" ]]'
   check "webkit2gtk"     pkg-config --exists webkit2gtk-4.1
   check "autoconf"       have autoconf
   check "automake"       have automake
+  check "autoreconf"     have autoreconf
   check "libtoolize"     have libtoolize
+  check "m4"             have m4
   check "patchelf"       have patchelf
   check "zip"            have zip
   check "unzip"          have unzip
@@ -212,6 +241,7 @@ verify() {
   check "target x86_64"  rustup target list --installed | grep -q x86_64-unknown-linux-gnu
   if [[ "$SKIP_CROSS" -eq 0 ]]; then
     check "aarch64-linux-gnu-gcc" have aarch64-linux-gnu-gcc
+    check "aarch64-linux-gnu-g++" have aarch64-linux-gnu-g++
     check "target aarch64"        rustup target list --installed | grep -q aarch64-unknown-linux-gnu
   fi
   if [[ "$SKIP_TAURI_CLI" -eq 0 ]]; then
@@ -221,8 +251,13 @@ verify() {
   if [[ "$ok" -eq 1 ]]; then
     log "All checks passed."
     echo
+    echo "Satisfies runner expectations for:"
+    echo "  build-rkdeveloptool.yaml (linux-x86_64, linux-aarch64)"
+    echo "  portable.yml / installer.yml (Tauri + rkdeveloptool)"
+    echo
     echo "Next (in the repo):"
     echo "  git submodule update --init --recursive"
+    echo "  # rkdeveloptool: ./autogen.sh && ./configure && make"
     echo "  cargo tauri build --no-bundle --target x86_64-unknown-linux-gnu"
     if [[ "$SKIP_CROSS" -eq 0 ]]; then
       echo "  cargo tauri build --no-bundle --target aarch64-unknown-linux-gnu"

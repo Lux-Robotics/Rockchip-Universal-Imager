@@ -5,6 +5,7 @@
 
 .DESCRIPTION
   Run in an elevated PowerShell (Run as Administrator) on the Windows CI host.
+  Target runner label: windows-11
 
     Set-ExecutionPolicy -Scope Process Bypass -Force
     .\packaging\windows\bootstrap-build-deps.ps1
@@ -12,17 +13,35 @@
     .\packaging\windows\bootstrap-build-deps.ps1 -SkipLlvmMingw
     .\packaging\windows\bootstrap-build-deps.ps1 -SkipVsBuildTools
 
-  Installs / ensures:
-    - Git for Windows, CMake, Ninja, 7-Zip (via winget when available)
-    - Visual Studio 2022 Build Tools (MSVC x64 + ARM64) — optional skip
-    - MSYS2 at C:\msys64 + MinGW64 packages (gcc, libusb, pkg-config, autotools, zip)
-    - llvm-mingw (aarch64-w64-mingw32 for rkdeveloptool arm64) — optional skip
-    - rustup + stable
-    - Rust targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
-    - cargo install tauri-cli ^2 — optional skip
+  ---------------------------------------------------------------------------
+  Runner expectations (workflows assume these are pre-installed)
+  ---------------------------------------------------------------------------
+  Used by:
+    .github/workflows/build-rkdeveloptool.yaml  (windows-x86_64, windows-aarch64)
+    .github/workflows/portable.yml / installer.yml
+
+  Required for rkdeveloptool (autogen + configure + make via MinGW):
+    - Git for Windows (bash available to Actions)
+    - MSYS2 at C:\msys64 with MINGW64:
+        mingw-w64-x86_64-gcc / g++
+        mingw-w64-x86_64-libusb   (libusb-1.0.dll + libusb-1.0.a + headers)
+        mingw-w64-x86_64-pkg-config
+        autoconf, automake, libtool, m4, make
+        zip, unzip, tar, bzip2, curl/wget, git
+    - llvm-mingw at C:\llvm-mingw (aarch64-w64-mingw32-gcc/g++) for arm64
+      (CI may also build libusb from source for windows-aarch64)
+
+  Required for Tauri app (MSVC):
+    - Visual Studio 2022 Build Tools (x64 + ARM64 toolsets) + Windows SDK
+    - CMake, Ninja
+    - rustup + stable, targets x86_64-pc-windows-msvc + aarch64-pc-windows-msvc
+    - tauri-cli ^2 (optional: -SkipTauriCli)
+
+  Installs all of the above.
 
 .NOTES
   Prefer winget. Falls back to direct downloads where needed.
+  libusb is libusb-1.0 (MinGW), not legacy libusb-win32 0.1.
 #>
 [CmdletBinding()]
 param(
@@ -181,19 +200,28 @@ try {
     Invoke-Msys "pacman -Syu --noconfirm"
 }
 
+# MSYS2 packages for rkdeveloptool + staging libusb-1.0.dll (libusb-1.0, not libusb-win32)
 $mingwPkgs = @(
+    # MinGW64 C++ toolchain (rkdeveloptool x86_64)
     "mingw-w64-x86_64-gcc"
     "mingw-w64-x86_64-libusb"
     "mingw-w64-x86_64-pkg-config"
+    # autotools (./autogen.sh → autoreconf)
     "autoconf"
     "automake"
     "libtool"
+    "m4"
     "make"
+    "patch"
+    # packaging + libusb source fetch (curl + bzip2 for .tar.bz2)
     "zip"
     "unzip"
-    "git"
     "tar"
+    "bzip2"
+    "curl"
     "wget"
+    "git"
+    "ca-certificates"
 ) -join " "
 
 Invoke-Msys "pacman -S --needed --noconfirm $mingwPkgs"
@@ -297,10 +325,20 @@ Check "git" { Assert-Command "git" }
 Check "cmake" { Assert-Command "cmake" }
 Check "ninja" { Assert-Command "ninja" }
 Check "msys2 bash" { Test-Path $Bash }
+Check "mingw gcc" { Test-Path (Join-Path $MsysRoot "mingw64\bin\gcc.exe") }
 Check "mingw g++" { Test-Path (Join-Path $MsysRoot "mingw64\bin\g++.exe") }
 Check "libusb.h" { Test-Path (Join-Path $MsysRoot "mingw64\include\libusb-1.0\libusb.h") }
 Check "libusb-1.0.dll" { Test-Path (Join-Path $MsysRoot "mingw64\bin\libusb-1.0.dll") }
+Check "libusb-1.0.a (static)" { Test-Path (Join-Path $MsysRoot "mingw64\lib\libusb-1.0.a") }
 Check "pkg-config" { Test-Path (Join-Path $MsysRoot "mingw64\bin\pkg-config.exe") }
+Check "msys make" { Test-Path (Join-Path $MsysRoot "usr\bin\make.exe") }
+Check "msys autoconf" { Test-Path (Join-Path $MsysRoot "usr\bin\autoconf") }
+Check "msys automake" { Test-Path (Join-Path $MsysRoot "usr\bin\automake") }
+Check "msys m4" { Test-Path (Join-Path $MsysRoot "usr\bin\m4.exe") }
+Check "msys bzip2" { Test-Path (Join-Path $MsysRoot "usr\bin\bzip2.exe") }
+Check "msys tar" { Test-Path (Join-Path $MsysRoot "usr\bin\tar.exe") }
+Check "msys curl" { Test-Path (Join-Path $MsysRoot "usr\bin\curl.exe") }
+Check "msys zip" { Test-Path (Join-Path $MsysRoot "usr\bin\zip.exe") }
 Check "rustup" { Assert-Command "rustup" }
 Check "rustc" { Assert-Command "rustc" }
 Check "cargo" { Assert-Command "cargo" }
@@ -309,6 +347,9 @@ Check "target aarch64-msvc" { (& rustup target list --installed) -match "aarch64
 if (-not $SkipLlvmMingw) {
     Check "aarch64-w64-mingw32-gcc" {
         (Test-Path "C:\llvm-mingw\bin\aarch64-w64-mingw32-gcc.exe") -or (Assert-Command "aarch64-w64-mingw32-gcc")
+    }
+    Check "aarch64-w64-mingw32-g++" {
+        (Test-Path "C:\llvm-mingw\bin\aarch64-w64-mingw32-g++.exe") -or (Assert-Command "aarch64-w64-mingw32-g++")
     }
 }
 if (-not $SkipTauriCli) {
@@ -325,10 +366,14 @@ if ($failed) {
 
 Write-Step "All checks passed."
 Write-Host ""
+Write-Host "Satisfies runner expectations for:"
+Write-Host "  build-rkdeveloptool.yaml (windows-x86_64, windows-aarch64)"
+Write-Host "  portable.yml / installer.yml (Tauri + rkdeveloptool)"
+Write-Host ""
 Write-Host "Next (in the repo):"
 Write-Host "  git submodule update --init --recursive"
 Write-Host "  cargo tauri build --no-bundle --target x86_64-pc-windows-msvc"
 Write-Host "  cargo tauri build --no-bundle --target aarch64-pc-windows-msvc"
-Write-Host "  # rkdeveloptool: use MSYS2 bash + MinGW (x64) or llvm-mingw (arm64)"
+Write-Host "  # rkdeveloptool: MSYS2 MinGW (x64) or llvm-mingw (arm64); see build-rkdeveloptool.yaml"
 Write-Host ""
 Write-Host "Open a NEW shell so PATH picks up Git, cargo, llvm-mingw, etc."

@@ -2,20 +2,30 @@
 # Bootstrap macOS build-server deps for Rockchip Universal Imager + rkdeveloptool.
 #
 # Safe over SSH (non-interactive where possible). Run as a normal admin user
-# that can use Homebrew (not root). Example:
+# that can use Homebrew (not root). Target runner label: macos-sequoia
 #
-#   curl -fsSL … | bash          # if you host this somewhere
 #   bash packaging/macos/bootstrap-build-deps.sh
 #   bash packaging/macos/bootstrap-build-deps.sh --skip-tauri-cli
 #
-# Installs:
-#   - Xcode Command Line Tools (if missing)
-#   - Homebrew (if missing)
-#   - brew: libusb pkg-config automake autoconf libtool
-#   - zip/unzip (via brew if missing from system)
-#   - rustup + stable (1.85+ expected by the project)
-#   - Rust targets: aarch64-apple-darwin, x86_64-apple-darwin
-#   - cargo install tauri-cli ^2 (optional: --skip-tauri-cli)
+# ---------------------------------------------------------------------------
+# Runner expectations (workflows assume these are pre-installed)
+# ---------------------------------------------------------------------------
+# Used by:
+#   .github/workflows/build-rkdeveloptool.yaml  (macos-x86_64, macos-aarch64)
+#   .github/workflows/portable.yml / installer.yml
+#
+# Required for rkdeveloptool (autogen + configure + make):
+#   - Xcode Command Line Tools (clang, clang++, make, git, install_name_tool, otool)
+#   - Homebrew packages: libusb, pkg-config, automake, autoconf, libtool
+#   - curl, tar, bzip2   (fetch/build libusb from source if needed)
+#   - zip, unzip
+#
+# Required for Tauri app:
+#   - rustup + stable (1.85+), targets aarch64-apple-darwin + x86_64-apple-darwin
+#   - tauri-cli ^2 (optional: --skip-tauri-cli)
+#   - system WebKit (no extra brew webkit package)
+#
+# Installs all of the above.
 #
 set -euo pipefail
 
@@ -172,8 +182,18 @@ install_brew_packages() {
   log "Updating Homebrew (quiet)…"
   brew update --quiet || brew update
 
-  local pkgs=(libusb pkg-config automake autoconf libtool)
-  # zip/unzip are usually system; brew as fallback if missing
+  # Core deps for rkdeveloptool + libusb discovery (match workflow comments)
+  local pkgs=(
+    libusb
+    pkg-config
+    automake
+    autoconf
+    libtool
+  )
+  # Fallbacks when CLT/system tools are missing or too old
+  have git   || pkgs+=(git)
+  have curl  || pkgs+=(curl)
+  have bzip2 || pkgs+=(bzip2)
   have zip   || pkgs+=(zip)
   have unzip || pkgs+=(unzip)
 
@@ -249,13 +269,21 @@ verify() {
 
   check "xcode-select"   xcode-select -p
   check "clang"          have clang
+  check "clang++"        have clang++
   check "make"           have make
   check "git"            have git
+  check "curl"           have curl
+  check "bzip2"          have bzip2
+  check "tar"            have tar
+  check "install_name_tool" have install_name_tool
+  check "otool"          have otool
   check "brew"           have brew
   check "pkg-config"     have pkg-config
   check "libusb (pc)"    pkg-config --exists libusb-1.0
+  check "libusb static"  bash -c 'd=$(pkg-config --variable=libdir libusb-1.0 2>/dev/null); [[ -n "$d" && -f "$d/libusb-1.0.a" ]]'
   check "autoconf"       have autoconf
   check "automake"       have automake
+  check "autoreconf"     have autoreconf
   check "libtoolize/libtool"  bash -c 'command -v libtoolize >/dev/null || command -v glibtoolize >/dev/null || command -v libtool >/dev/null'
   check "zip"            have zip
   check "unzip"          have unzip
@@ -271,8 +299,13 @@ verify() {
   if [[ "$ok" -eq 1 ]]; then
     log "All checks passed."
     echo
+    echo "Satisfies runner expectations for:"
+    echo "  build-rkdeveloptool.yaml (macos-x86_64, macos-aarch64)"
+    echo "  portable.yml / installer.yml (Tauri + rkdeveloptool)"
+    echo
     echo "Next (in the repo):"
     echo "  git submodule update --init --recursive"
+    echo "  # rkdeveloptool: ./autogen.sh && ./configure && make"
     echo "  cargo tauri build --no-bundle --target aarch64-apple-darwin"
     echo "  # and/or: --target x86_64-apple-darwin"
   else
