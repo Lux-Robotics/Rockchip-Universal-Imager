@@ -53,7 +53,7 @@
 #   - MSYS2 (MINGW64 gcc, libusb, pkg-config, autotools); optional env:
 #       MSYS2_ROOT, MSYS2_BASH, LLVM_MINGW_ROOT (set by bootstrap)
 #   - llvm-mingw for aarch64-w64-mingw32 (rkdeveloptool arm64)
-#   - Windows shell: MSYS2_BASH env (fallback C:/msys64/usr/bin/bash.exe)
+#   - Windows shell: C:/msys64/usr/bin/bash.exe (no env context in matrix.shell)
 #
 # This workflow only installs/updates *Rust* pieces (toolchain targets,
 # tauri-cli crate, and Cargo crate deps via build).
@@ -75,7 +75,7 @@ jobs:
   portable:
     name: portable (${{ matrix.os_label }}-${{ matrix.arch_label }})
     runs-on: ${{ matrix.runner }}
-    # Windows: MSYS2 bash via MSYS2_BASH (set by bootstrap); not a relative .cmd path.
+    # Windows: plain MSYS2 bash path (env context not allowed in matrix.shell).
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -103,7 +103,7 @@ jobs:
 
           # --- Windows X64 host: Windows only (native + aarch64 cross) ---
           - runner: [self-hosted, Windows, X64]
-            shell: ${{ format('"{0}" --noprofile --norc -e "{{0}}"', env.MSYS2_BASH || 'C:/msys64/usr/bin/bash.exe') }}
+            shell: C:/msys64/usr/bin/bash.exe --noprofile --norc -e {0}
             os_label: windows
             arch_label: x86_64
             rust_target: x86_64-pc-windows-msvc
@@ -111,7 +111,7 @@ jobs:
             rk_name: rkdeveloptool.exe
             cross: false
           - runner: [self-hosted, Windows, X64]
-            shell: ${{ format('"{0}" --noprofile --norc -e "{{0}}"', env.MSYS2_BASH || 'C:/msys64/usr/bin/bash.exe') }}
+            shell: C:/msys64/usr/bin/bash.exe --noprofile --norc -e {0}
             os_label: windows
             arch_label: aarch64
             rust_target: aarch64-pc-windows-msvc
