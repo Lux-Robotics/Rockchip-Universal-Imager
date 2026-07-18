@@ -191,6 +191,13 @@ function Invoke-Msys([string]$Command) {
 Install-Msys2
 Refresh-Path
 
+# Machine env so CI discovers tools without hardcoding drive letters / OneDrive layouts
+Write-Step "Setting machine env MSYS2_ROOT / MSYS2_BASH (install-location independent for CI)"
+[Environment]::SetEnvironmentVariable("MSYS2_ROOT", $MsysRoot, "Machine")
+[Environment]::SetEnvironmentVariable("MSYS2_BASH", $Bash, "Machine")
+$env:MSYS2_ROOT = $MsysRoot
+$env:MSYS2_BASH = $Bash
+
 Write-Step "MSYS2 pacman: update + MinGW64 toolchain / libusb / autotools"
 # First-time keyring / update can need multiple passes
 try {
@@ -255,6 +262,12 @@ if (-not $SkipLlvmMingw) {
             [Environment]::SetEnvironmentVariable("Path", $newPath, "Machine")
         }
         Refresh-Path
+    }
+    # Always publish root for CI discovery (existing or freshly installed)
+    if (Test-Path $LlvmMingwRoot) {
+        [Environment]::SetEnvironmentVariable("LLVM_MINGW_ROOT", $LlvmMingwRoot, "Machine")
+        $env:LLVM_MINGW_ROOT = $LlvmMingwRoot
+        Write-Step "Set machine env LLVM_MINGW_ROOT=$LlvmMingwRoot"
     }
 } else {
     Write-Step "Skipping llvm-mingw (-SkipLlvmMingw)"

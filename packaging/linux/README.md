@@ -12,6 +12,9 @@ bash packaging/linux/bootstrap-build-deps.sh
 Installs apt packages (build tools, libusb, WebKitGTK/Tauri deps), aarch64
 cross GCC, rustup + targets, and `tauri-cli`.
 
+Shared CI path helpers (used by GitHub Actions bash steps on all OSes):
+`packaging/ci/ci-env.sh`.
+
 ## Installer wrappers (future)
 
 CI ships a flat install-layout zip:

@@ -18,7 +18,16 @@ bash packaging/windows/bootstrap-build-deps.sh
 
 Installs Git/CMake/Ninja (winget), VS 2022 Build Tools (x64+ARM64), MSYS2
 MinGW64 + libusb, llvm-mingw (arm64 rkdeveloptool), rustup + MSVC targets,
-and `tauri-cli`.
+and `tauri-cli`. Sets machine env `MSYS2_ROOT`, `MSYS2_BASH`, `LLVM_MINGW_ROOT`.
+
+### CI helpers (same packaging tree)
+
+| File | Role |
+|------|------|
+| `windows-bash.cmd` | Actions custom shell: finds MSYS2/Git bash without hardcoding paths |
+| `../ci/ci-env.sh` | Shared bash helpers: workspace normalize, tool PATH discovery |
+
+Workflows use these after checkout; they are not installed by bootstrap (they ship in the repo).
 
 ## Installer wrappers (future)
 

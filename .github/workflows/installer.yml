@@ -53,11 +53,10 @@
 # Windows (pre-provisioned runner, e.g. WINDOWS-11-CICD):
 #   - Visual Studio Build Tools / MSVC (x64 + ARM64 toolsets)
 #   - CMake, Ninja, Git for Windows (bash available)
-#   - MSYS2 at C:\msys64 with MINGW64:
-#       mingw-w64-x86_64-gcc, mingw-w64-x86_64-libusb,
-#       mingw-w64-x86_64-pkg-config, autoconf, automake, libtool, make, zip
-#   - llvm-mingw (or equivalent) for aarch64-w64-mingw32 (rkdeveloptool arm64)
-#   - libusb-1.0.dll on PATH / under C:\msys64\mingw64\bin (staged into zip)
+#   - MSYS2 (MINGW64 gcc, libusb, pkg-config, autotools); optional env:
+#       MSYS2_ROOT, MSYS2_BASH, LLVM_MINGW_ROOT (set by bootstrap)
+#   - llvm-mingw for aarch64-w64-mingw32 (rkdeveloptool arm64)
+#   - Shell discovery: packaging/windows/windows-bash.cmd (x64 + arm64 jobs)
 #
 # This workflow only installs/updates *Rust* pieces (toolchain targets,
 # tauri-cli crate, and Cargo crate deps via build).
@@ -79,15 +78,17 @@ jobs:
   installer:
     name: installer (${{ matrix.os_label }}-${{ matrix.arch_label }})
     runs-on: ${{ matrix.runner }}
+    # Windows: discover bash via packaging/windows/windows-bash.cmd (no C:\msys64 hardcode).
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # --- Linux X64 host: Linux only (native + aarch64 cross) ---
           - runner: [self-hosted, Linux, X64]
+            shell: bash
             os_label: linux
             arch_label: x86_64
             rust_target: x86_64-unknown-linux-gnu
@@ -95,6 +96,7 @@ jobs:
             rk_name: rkdeveloptool
             cross: false
           - runner: [self-hosted, Linux, X64]
+            shell: bash
             os_label: linux
             arch_label: aarch64
             rust_target: aarch64-unknown-linux-gnu
@@ -104,6 +106,7 @@ jobs:
 
           # --- Windows X64 host: Windows only (native + aarch64 cross) ---
           - runner: [self-hosted, Windows, X64]
+            shell: cmd /c "packaging\windows\windows-bash.cmd" "{0}"
             os_label: windows
             arch_label: x86_64
             rust_target: x86_64-pc-windows-msvc
@@ -111,6 +114,7 @@ jobs:
             rk_name: rkdeveloptool.exe
             cross: false
           - runner: [self-hosted, Windows, X64]
+            shell: cmd /c "packaging\windows\windows-bash.cmd" "{0}"
             os_label: windows
             arch_label: aarch64
             rust_target: aarch64-pc-windows-msvc
@@ -120,6 +124,7 @@ jobs:
 
           # --- macOS X64 host: macOS only (native + aarch64 cross) ---
           - runner: [self-hosted, macOS, X64]
+            shell: bash
             os_label: macos
             arch_label: x86_64
             rust_target: x86_64-apple-darwin
@@ -127,6 +132,7 @@ jobs:
             rk_name: rkdeveloptool
             cross: false
           - runner: [self-hosted, macOS, X64]
+            shell: bash
             os_label: macos
             arch_label: aarch64
             rust_target: aarch64-apple-darwin
@@ -143,8 +149,14 @@ jobs:
       # --- Rust only (no apt/brew/pacman) ---
 
       - name: Ensure Rust stable + target
+        env:
+          OS_LABEL: ${{ matrix.os_label }}
         run: |
           set -euo pipefail
+          # shellcheck source=packaging/ci/ci-env.sh
+          source packaging/ci/ci-env.sh
+          cd "$(ci_workspace)"
+          ci_setup_toolchain_path "$OS_LABEL"
           command -v rustup >/dev/null
           rustup toolchain install stable --profile minimal
           rustup default stable
@@ -159,7 +171,14 @@ jobs:
           shared-key: installer-${{ matrix.os_label }}-${{ matrix.arch_label }}
 
       - name: Install tauri-cli (crate)
-        run: cargo install tauri-cli --version "^2" --locked
+        env:
+          OS_LABEL: ${{ matrix.os_label }}
+        run: |
+          set -euo pipefail
+          source packaging/ci/ci-env.sh
+          cd "$(ci_workspace)"
+          ci_setup_toolchain_path "$OS_LABEL"
+          cargo install tauri-cli --version "^2" --locked
 
       # --- rkdeveloptool (C++; uses pre-installed toolchain) ---
 
@@ -170,20 +189,16 @@ jobs:
           CROSS: ${{ matrix.cross }}
         run: |
           set -euo pipefail
-          SRC="${{ github.workspace }}/dependencies/rkdeveloptool"
-          BUILD="${{ github.workspace }}/dependencies/rkdeveloptool-build-${ARCH_LABEL}"
-          OUT_DIR="${{ github.workspace }}/dist/companions"
+          source packaging/ci/ci-env.sh
+          WS="$(ci_workspace)"
+          cd "$WS"
+          ci_setup_toolchain_path "$OS_LABEL"
+
+          SRC="${WS}/dependencies/rkdeveloptool"
+          BUILD="${WS}/build/rkdeveloptool-build-${ARCH_LABEL}"
+          OUT_DIR="${WS}/dist/companions"
           mkdir -p "$BUILD" "$OUT_DIR"
           test -d "$SRC"
-
-          # Windows: prefer MSYS2 tools (pre-installed at C:\msys64)
-          if [[ "$OS_LABEL" == "windows" ]]; then
-            export PATH="/c/msys64/mingw64/bin:/c/msys64/usr/bin:/mingw64/bin:${PATH:-}"
-            # Optional llvm-mingw for arm64 cross (document path on runner)
-            for d in /c/llvm-mingw/bin "/c/Program Files/llvm-mingw/bin" /llvm-mingw/bin; do
-              [[ -d "$d" ]] && export PATH="$d:$PATH" && break
-            done
-          fi
 
           if [[ ! -x "$SRC/configure" ]]; then
             (cd "$SRC" && ./autogen.sh)
@@ -215,7 +230,6 @@ jobs:
 
           (
             cd "$BUILD"
-            # Out-of-tree configure; re-run cleanly per arch
             rm -rf ./*
             "$SRC/configure" "${CONFIGURE_ARGS[@]+"${CONFIGURE_ARGS[@]}"}"
             make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
@@ -250,15 +264,14 @@ jobs:
           RUST_TARGET: ${{ matrix.rust_target }}
         run: |
           set -euo pipefail
-          # Point Cargo at pre-installed cross linkers when needed.
+          source packaging/ci/ci-env.sh
+          cd "$(ci_workspace)"
+          ci_setup_toolchain_path "$OS_LABEL"
           case "$OS_LABEL-$ARCH_LABEL" in
             linux-aarch64)
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-aarch64-linux-gnu-gcc}"
               ;;
-            windows-aarch64)
-              # MSVC arm64: rustup + VS ARM64 tools (no extra env usually).
-              # MinGW arm64 alternative would set aarch64-w64-mingw32-gcc here.
-              ;;
+            windows-aarch64) ;;
             macos-x86_64)
               export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="${CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER:-clang}"
               export CFLAGS_x86_64_apple_darwin="${CFLAGS_x86_64_apple_darwin:--arch x86_64}"
@@ -269,24 +282,30 @@ jobs:
               ;;
           esac
           cargo tauri build --no-bundle --target "$RUST_TARGET"
-        working-directory: ${{ github.workspace }}
 
       # --- Stage + zip (installer payload) ---
 
       - name: Package installer payload zip
+        env:
+          OS_LABEL: ${{ matrix.os_label }}
         run: |
           set -euo pipefail
+          source packaging/ci/ci-env.sh
+          WS="$(ci_workspace)"
+          cd "$WS"
+          ci_setup_toolchain_path "$OS_LABEL"
+
           OS="${{ matrix.os_label }}"
           ARCH="${{ matrix.arch_label }}"
           APP_NAME="${{ matrix.app_name }}"
           RK_NAME="${{ matrix.rk_name }}"
           RUST_TARGET="${{ matrix.rust_target }}"
-          APP_BIN="${{ github.workspace }}/src-tauri/target/${RUST_TARGET}/release/${APP_NAME}"
+          APP_BIN="${WS}/src-tauri/target/${RUST_TARGET}/release/${APP_NAME}"
           RKDEV_BIN="${RKDEV_BIN}"
-          LOADER_SRC="${{ github.workspace }}/loader_binaries"
+          LOADER_SRC="${WS}/loader_binaries"
           FOLDER="rockchip-universal-imager-${OS}-${ARCH}"
-          STAGE="${{ github.workspace }}/dist/installer/staging/${FOLDER}"
-          ZIP="${{ github.workspace }}/dist/installer/${FOLDER}-install.zip"
+          STAGE="${WS}/dist/installer/staging/${FOLDER}"
+          ZIP="${WS}/dist/installer/${FOLDER}-install.zip"
 
           test -f "$APP_BIN"
           test -f "$RKDEV_BIN"
@@ -302,8 +321,9 @@ jobs:
           fi
 
           if [[ "$OS" == "windows" ]]; then
-            for d in /mingw64/bin "C:/msys64/mingw64/bin" "/c/msys64/mingw64/bin"; do
-              if [[ -f "$d/libusb-1.0.dll" ]]; then
+            mroot="${MSYS2_ROOT_UNIX:-}"
+            for d in ${mroot:+"$mroot/mingw64/bin"} /mingw64/bin; do
+              if [[ -n "$d" && -f "$d/libusb-1.0.dll" ]]; then
                 cp "$d/libusb-1.0.dll" "$STAGE/"
                 break
               fi
@@ -311,7 +331,7 @@ jobs:
           fi
 
           {
-            echo "Rockchip Universal Imager — install layout (${OS}/${ARCH})"
+            echo "Rockchip Universal Imager - install layout (${OS}/${ARCH})"
             echo ""
             echo "Keep this folder intact. The app expects:"
             echo "  - ${APP_NAME}"
@@ -323,7 +343,7 @@ jobs:
 
           mkdir -p "$(dirname "$ZIP")"
           (
-            cd "${{ github.workspace }}/dist/installer/staging"
+            cd "${WS}/dist/installer/staging"
             rm -f "$ZIP"
             zip -r "$ZIP" "$FOLDER"
           )

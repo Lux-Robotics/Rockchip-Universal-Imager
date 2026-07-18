@@ -12,6 +12,9 @@ bash packaging/macos/bootstrap-build-deps.sh
 Installs Xcode CLT, Homebrew packages (libusb, autotools), rustup + both
 Apple targets, and `tauri-cli`.
 
+Shared CI path helpers (used by GitHub Actions bash steps on all OSes):
+`packaging/ci/ci-env.sh`.
+
 ## Installer wrappers (future)
 
 CI ships a flat install-layout zip (two binaries + `loader_binaries/`), not a

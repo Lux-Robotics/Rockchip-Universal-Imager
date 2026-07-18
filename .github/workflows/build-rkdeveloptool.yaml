@@ -17,8 +17,11 @@
 #   Linux:   build-essential, pkg-config, autoconf, automake, libtool,
 #            libusb-1.0-0-dev, libudev-dev; aarch64: gcc/g++-aarch64-linux-gnu
 #   macOS:   Xcode CLT, brew libusb pkg-config automake autoconf libtool
-#   Windows: MSYS2 C:\msys64 (MINGW64 gcc, libusb, pkg-config, autotools),
-#            llvm-mingw at C:\llvm-mingw (aarch64-w64-mingw32-*) for arm64
+#   Windows: MSYS2 (MINGW64 gcc, libusb, pkg-config, autotools),
+#            llvm-mingw (aarch64-w64-mingw32-*) for arm64.
+#            Optional machine env (install-location independent):
+#              MSYS2_ROOT, MSYS2_BASH, LLVM_MINGW_ROOT
+#            Shell: packaging/windows/windows-bash.cmd discovers bash (no hard path).
 #
 # libusb packaging policy:
 #   1) Prefer static link (no external libusb) when a .a is available.
@@ -51,32 +54,38 @@ jobs:
   build:
     name: rkdeveloptool (${{ matrix.os_label }}-${{ matrix.arch_label }})
     runs-on: ${{ matrix.runner }}
+    # Windows: do not hardcode C:\msys64 — discover via windows-bash.cmd
+    # (MSYS2_ROOT / MSYS2_BASH / common paths / Git bash). Same for x64 + arm64.
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # --- Linux X64 host: Linux products only ---
           - runner: [self-hosted, Linux, X64]
+            shell: bash
             os_label: linux
             arch_label: x86_64
             host_triple: x86_64-linux-gnu
             cross: false
           - runner: [self-hosted, Linux, X64]
+            shell: bash
             os_label: linux
             arch_label: aarch64
             host_triple: aarch64-linux-gnu
             cross: true
 
-          # --- Windows X64 host: Windows products only ---
+          # --- Windows X64 host: Windows products only (native + aarch64 cross) ---
           - runner: [self-hosted, Windows, X64]
+            shell: cmd /c "packaging\windows\windows-bash.cmd" "{0}"
             os_label: windows
             arch_label: x86_64
             host_triple: x86_64-w64-mingw32
             cross: false
           - runner: [self-hosted, Windows, X64]
+            shell: cmd /c "packaging\windows\windows-bash.cmd" "{0}"
             os_label: windows
             arch_label: aarch64
             host_triple: aarch64-w64-mingw32
@@ -84,11 +93,13 @@ jobs:
 
           # --- macOS X64 host: macOS products only ---
           - runner: [self-hosted, macOS, X64]
+            shell: bash
             os_label: macos
             arch_label: x86_64
             host_triple: x86_64-apple-darwin
             cross: false
           - runner: [self-hosted, macOS, X64]
+            shell: bash
             os_label: macos
             arch_label: aarch64
             host_triple: aarch64-apple-darwin
@@ -111,9 +122,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          WS="${{ github.workspace }}"
+          # cwd is the job workspace (Actions). Relative source avoids Windows
+          # GITHUB_WORKSPACE backslash paths under MSYS.
+          # shellcheck source=packaging/ci/ci-env.sh
+          source packaging/ci/ci-env.sh
+
+          # Prefer Actions GITHUB_WORKSPACE (any drive / OneDrive / etc.), normalized.
+          WS="$(ci_workspace)"
+          echo "workspace (unix)=$WS"
+          cd "$WS"
+
           UPSTREAM="${WS}/dependencies/rkdeveloptool"
-          # Private source tree per matrix cell (self-hosted runners may run jobs in parallel).
+          # Private trees under the job workspace only (parallel-safe, install-independent).
           SRC="${WS}/build/src-rkdeveloptool-${OS_LABEL}-${ARCH_LABEL}"
           BUILD="${WS}/build/rkdeveloptool-${OS_LABEL}-${ARCH_LABEL}"
           PREFIX="${WS}/build/prefix-${OS_LABEL}-${ARCH_LABEL}"
@@ -126,36 +146,8 @@ jobs:
           mkdir -p "$(dirname "$SRC")" "$BUILD" "$PREFIX" "$STAGE"
           cp -a "$UPSTREAM" "$SRC"
 
-          # ------------------------------------------------------------------
-          # Toolchain / PATH (Windows MSYS2 + optional llvm-mingw)
-          # ------------------------------------------------------------------
-          setup_env() {
-            case "$OS_LABEL" in
-              windows)
-                export PATH="/c/msys64/mingw64/bin:/c/msys64/usr/bin:/mingw64/bin:${PATH:-}"
-                for d in /c/llvm-mingw/bin "/c/Program Files/llvm-mingw/bin" /llvm-mingw/bin; do
-                  if [[ -d "$d" ]]; then
-                    export PATH="$d:$PATH"
-                    break
-                  fi
-                done
-                # Prefer MSYS2 usr tools for autogen
-                export ACLOCAL_PATH="${ACLOCAL_PATH:-/mingw64/share/aclocal:/usr/share/aclocal}"
-                ;;
-              macos)
-                if [[ -x /opt/homebrew/bin/brew ]]; then
-                  eval "$(/opt/homebrew/bin/brew shellenv)"
-                elif [[ -x /usr/local/bin/brew ]]; then
-                  eval "$(/usr/local/bin/brew shellenv)"
-                fi
-                ;;
-              linux)
-                :
-                ;;
-            esac
-          }
-
-          setup_env
+          # Toolchain PATH: discover MSYS2 / llvm-mingw / brew / cargo (no fixed drive).
+          ci_setup_toolchain_path "$OS_LABEL"
 
           need() {
             if ! command -v "$1" >/dev/null 2>&1; then
@@ -289,19 +281,20 @@ jobs:
               libdir="$(pkg-config --variable=libdir libusb-1.0 2>/dev/null || true)"
               case "$OS_LABEL" in
                 windows)
+                  local mroot="${MSYS2_ROOT_UNIX:-}"
                   for cand in \
                     "$libdir/../bin/libusb-1.0.dll" \
-                    /mingw64/bin/libusb-1.0.dll \
-                    /c/msys64/mingw64/bin/libusb-1.0.dll; do
-                    if [[ -f "$cand" ]]; then
+                    ${mroot:+"$mroot/mingw64/bin/libusb-1.0.dll"} \
+                    /mingw64/bin/libusb-1.0.dll; do
+                    if [[ -n "$cand" && -f "$cand" ]]; then
                       LIBUSB_STAGE_FILES+=("$cand")
                       break
                     fi
                   done
-                  # MinGW also often needs libwinpthread / libgcc / libstdc++ if not fully static
+                  # MinGW runtimes when dynamically linked
                   for dll in libwinpthread-1.dll libgcc_s_seh-1.dll libstdc++-6.dll; do
-                    for root in /mingw64/bin /c/msys64/mingw64/bin; do
-                      if [[ -f "$root/$dll" ]]; then
+                    for root in ${mroot:+"$mroot/mingw64/bin"} /mingw64/bin; do
+                      if [[ -n "$root" && -f "$root/$dll" ]]; then
                         LIBUSB_STAGE_FILES+=("$root/$dll")
                         break
                       fi
@@ -355,7 +348,7 @@ jobs:
               return 0
             fi
 
-            echo "libusb: not found via pkg-config — building from source"
+            echo "libusb: not found via pkg-config - building from source"
             build_libusb_from_source
           }
 
@@ -411,7 +404,7 @@ jobs:
                 fi
                 ;;
             esac
-            echo "libusb: static from source → $LIBUSB_PREFIX"
+            echo "libusb: static from source -> $LIBUSB_PREFIX"
           }
 
           resolve_libusb
