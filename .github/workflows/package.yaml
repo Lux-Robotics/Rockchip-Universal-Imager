@@ -46,7 +46,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout (loader_binaries)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download all rkdeveloptool artifacts
         uses: actions/download-artifact@v4

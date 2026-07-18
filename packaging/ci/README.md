@@ -17,3 +17,7 @@ package.yaml
 Portable vs installer: same two binaries + `loader_binaries/`; portable adds
 an empty `portable` marker file. Logs always use OS system directories (see
 `src-tauri/src/logging.rs`), not the app folder.
+
+**Note:** `linux-aarch64` GUI is omitted from `build-app` / packaging for now
+(Tauri/WebKit cross-link from x86_64 is unreliable). Companion tool still
+builds as `rkdeveloptool-linux-aarch64`.

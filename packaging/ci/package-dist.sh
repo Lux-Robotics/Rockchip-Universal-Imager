@@ -33,9 +33,9 @@ IN_ROOT="${IN_ROOT:-$ROOT/dist/in}"
 OUT_ROOT="${OUT_ROOT:-$ROOT/dist/out}"
 LOADER_SRC="${LOADER_SRC:-$ROOT/loader_binaries}"
 
+# Matches build-app.yaml products (linux-aarch64 GUI omitted for now).
 CELLS=(
   "linux x86_64 rockchip-universal-imager rkdeveloptool"
-  "linux aarch64 rockchip-universal-imager rkdeveloptool"
   "windows x86_64 rockchip-universal-imager.exe rkdeveloptool.exe"
   "windows aarch64 rockchip-universal-imager.exe rkdeveloptool.exe"
   "macos x86_64 rockchip-universal-imager rkdeveloptool"

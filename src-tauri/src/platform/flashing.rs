@@ -36,6 +36,7 @@ pub struct Status {
 #[derive(Debug, Clone, Default)]
 pub struct InstallOptions {
     /// Windows libwdi device description override (unused on Linux/macOS).
+    #[allow(dead_code)]
     pub device_name: String,
 }
 
