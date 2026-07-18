@@ -106,7 +106,7 @@ jobs:
 
           # --- Windows X64 host: Windows only (native + aarch64 cross) ---
           - runner: [self-hosted, Windows, X64]
-            shell: packaging\windows\windows-bash.cmd "{0}"
+            shell: "\"${{ github.workspace }}\\packaging\\windows\\windows-bash.cmd\" \"{0}\""
             os_label: windows
             arch_label: x86_64
             rust_target: x86_64-pc-windows-msvc
@@ -114,7 +114,7 @@ jobs:
             rk_name: rkdeveloptool.exe
             cross: false
           - runner: [self-hosted, Windows, X64]
-            shell: packaging\windows\windows-bash.cmd "{0}"
+            shell: "\"${{ github.workspace }}\\packaging\\windows\\windows-bash.cmd\" \"{0}\""
             os_label: windows
             arch_label: aarch64
             rust_target: aarch64-pc-windows-msvc

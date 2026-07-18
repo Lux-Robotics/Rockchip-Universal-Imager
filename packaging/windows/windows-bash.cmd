@@ -3,19 +3,21 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 REM GitHub Actions custom shell for Windows self-hosted runners.
 REM
-REM Workflow usage (relative to repo after checkout):
-REM   shell: packaging\windows\windows-bash.cmd "{0}"
+REM Workflow usage (MUST be absolute — relative paths resolve from System32):
+REM   shell: "\"${{ github.workspace }}\\packaging\\windows\\windows-bash.cmd\" \"{0}\""
 REM
-REM Do NOT use:  cmd /c "this.cmd" "{0}"
-REM   cmd /c only executes the first quoted token, so the script path is dropped
-REM   and Windows reports: "The filename, directory name, or volume label syntax is incorrect."
+REM Do NOT use:
+REM   shell: packaging\windows\windows-bash.cmd "{0}"
+REM     -> looks under C:\WINDOWS\system32\packaging\...
+REM   shell: cmd /c "this.cmd" "{0}"
+REM     -> cmd /c drops the script path argument
 REM
 REM Discovers bash via MSYS2_BASH / MSYS2_ROOT / common paths / Git / PATH.
 
 set "SCRIPT=%~1"
 if not defined SCRIPT (
   echo ERROR: windows-bash.cmd: no script path argument from Actions. 1>&2
-  echo Expected shell: packaging\windows\windows-bash.cmd "{0}" 1>&2
+  echo Expected shell with absolute path via github.workspace + "{0}" 1>&2
   exit /b 1
 )
 
