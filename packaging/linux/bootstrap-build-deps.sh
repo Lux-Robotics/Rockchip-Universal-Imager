@@ -120,23 +120,36 @@ install_apt_packages() {
       gcc-aarch64-linux-gnu
       g++-aarch64-linux-gnu
       binutils-aarch64-linux-gnu
-      # headers for native multiarch where available (best-effort)
       libc6-dev-arm64-cross
+      # Cross pkg-config helper when available (Debian/Ubuntu)
+      pkg-config
     )
   fi
 
   log "Installing apt packages…"
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${pkgs[@]}"
 
-  # Optional: multiarch libusb for linking aarch64 targets (may not exist on all releases).
-  # build-rkdeveloptool.yaml usually builds libusb from source for linux-aarch64 instead.
+  # aarch64 multiarch for Tauri GUI cross (libdbus-sys, gtk, webkit2gtk).
+  # Without these, `cargo build --target aarch64-unknown-linux-gnu` fails in pkg-config.
   if [[ "$SKIP_CROSS" -eq 0 ]]; then
-    log "Attempting aarch64 multiarch libusb (best-effort)…"
+    log "Installing aarch64 multiarch Tauri/WebKit deps (best-effort)…"
     sudo dpkg --add-architecture arm64 || true
     sudo apt-get update || true
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      libusb-1.0-0-dev:arm64 2>/dev/null || \
-      echo "  (skipped libusb:arm64 — CI builds libusb from source for cross)"
+    local arm_pkgs=(
+      libusb-1.0-0-dev:arm64
+      libdbus-1-dev:arm64
+      libssl-dev:arm64
+      libgtk-3-dev:arm64
+      libwebkit2gtk-4.1-dev:arm64
+      libayatana-appindicator3-dev:arm64
+      librsvg2-dev:arm64
+      libsoup-3.0-dev:arm64
+      libjavascriptcoregtk-4.1-dev:arm64
+    )
+    for p in "${arm_pkgs[@]}"; do
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$p" 2>/dev/null \
+        || echo "  (skipped $p — install manually if linux-aarch64 app build fails)"
+    done
   fi
 }
 
@@ -243,6 +256,7 @@ verify() {
     check "aarch64-linux-gnu-gcc" have aarch64-linux-gnu-gcc
     check "aarch64-linux-gnu-g++" have aarch64-linux-gnu-g++
     check "target aarch64"        rustup target list --installed | grep -q aarch64-unknown-linux-gnu
+    check "dbus-1 arm64 pc"       bash -c 'PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig pkg-config --exists dbus-1'
   fi
   if [[ "$SKIP_TAURI_CLI" -eq 0 ]]; then
     check "tauri-cli"    cargo tauri --version
