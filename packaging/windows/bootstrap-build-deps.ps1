@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Bootstrap Windows build-server deps for Rockchip Universal Imager + rkdeveloptool.
@@ -142,7 +142,7 @@ if (-not $SkipVsBuildTools) {
         ) -join " "
         & winget install --id $vsId -e --accept-package-agreements --accept-source-agreements --disable-interactivity --override $override
         if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
-            Write-Warning "VS Build Tools winget exit $LASTEXITCODE — install/repair via Visual Studio Installer if needed."
+            Write-Warning "VS Build Tools winget exit $LASTEXITCODE - install/repair via Visual Studio Installer if needed."
         }
     } else {
         Write-Warning "Install VS 2022 Build Tools manually with Desktop C++ and ARM64 tools."
@@ -206,7 +206,7 @@ $mingwPkgs = @(
     "mingw-w64-x86_64-gcc"
     "mingw-w64-x86_64-libusb"
     "mingw-w64-x86_64-pkg-config"
-    # autotools (./autogen.sh → autoreconf)
+    # autotools (./autogen.sh -> autoreconf)
     "autoconf"
     "automake"
     "libtool"
@@ -362,7 +362,7 @@ if (-not $SkipTauriCli) {
 }
 
 if ($failed) {
-    Write-Step "Some checks failed — review FAIL lines above."
+    Write-Step "Some checks failed - review FAIL lines above."
     exit 1
 }
 
