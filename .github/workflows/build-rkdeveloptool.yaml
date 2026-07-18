@@ -21,7 +21,7 @@
 #            llvm-mingw (aarch64-w64-mingw32-*) for arm64.
 #            Optional machine env (install-location independent):
 #              MSYS2_ROOT, MSYS2_BASH, LLVM_MINGW_ROOT
-#            Shell: packaging/windows/windows-bash.cmd discovers bash (no hard path).
+#            Windows shell: "$MSYS2_BASH" (fallback C:/msys64/usr/bin/bash.exe)
 #
 # libusb packaging policy:
 #   1) Prefer static link (no external libusb) when a .a is available.
@@ -54,8 +54,8 @@ jobs:
   build:
     name: rkdeveloptool (${{ matrix.os_label }}-${{ matrix.arch_label }})
     runs-on: ${{ matrix.runner }}
-    # Windows: absolute path to windows-bash.cmd (relative packaging\... is resolved
-    # from System32 and fails). Launcher discovers MSYS2 bash via env / search.
+    # Windows: run steps with MSYS2 bash directly (never a relative packaging\ path;
+    # those resolve under System32). MSYS2_BASH from runner machine env, with fallback.
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -79,13 +79,13 @@ jobs:
 
           # --- Windows X64 host: Windows products only (native + aarch64 cross) ---
           - runner: [self-hosted, Windows, X64]
-            shell: "\"${{ github.workspace }}\\packaging\\windows\\windows-bash.cmd\" \"{0}\""
+            shell: ${{ format('"{0}" --noprofile --norc -e "{{0}}"', env.MSYS2_BASH || 'C:/msys64/usr/bin/bash.exe') }}
             os_label: windows
             arch_label: x86_64
             host_triple: x86_64-w64-mingw32
             cross: false
           - runner: [self-hosted, Windows, X64]
-            shell: "\"${{ github.workspace }}\\packaging\\windows\\windows-bash.cmd\" \"{0}\""
+            shell: ${{ format('"{0}" --noprofile --norc -e "{{0}}"', env.MSYS2_BASH || 'C:/msys64/usr/bin/bash.exe') }}
             os_label: windows
             arch_label: aarch64
             host_triple: aarch64-w64-mingw32

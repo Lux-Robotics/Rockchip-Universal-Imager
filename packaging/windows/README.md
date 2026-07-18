@@ -20,14 +20,11 @@ Installs Git/CMake/Ninja (winget), VS 2022 Build Tools (x64+ARM64), MSYS2
 MinGW64 + libusb, llvm-mingw (arm64 rkdeveloptool), rustup + MSVC targets,
 and `tauri-cli`. Sets machine env `MSYS2_ROOT`, `MSYS2_BASH`, `LLVM_MINGW_ROOT`.
 
-### CI helpers (same packaging tree)
+### CI helpers
 
-| File | Role |
-|------|------|
-| `windows-bash.cmd` | Actions custom shell: finds MSYS2/Git bash without hardcoding paths |
-| `../ci/ci-env.sh` | Shared bash helpers: workspace normalize, tool PATH discovery |
-
-Workflows use these after checkout; they are not installed by bootstrap (they ship in the repo).
+Shared bash helpers live in `packaging/ci/ci-env.sh` (workspace normalize, tool
+PATH discovery). Windows workflow steps invoke MSYS2 bash via the `MSYS2_BASH`
+machine env (set by this bootstrap), not a custom `.cmd` launcher.
 
 ## Installer wrappers (future)
 
