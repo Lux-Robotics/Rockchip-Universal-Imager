@@ -1,0 +1,159 @@
+# Build the Tauri app only (no rkdeveloptool compile, no zip packaging).
+#
+# Artifact per matrix cell:
+#   app-<os>-<arch>/
+#     rockchip-universal-imager[.exe]
+#     APP.txt
+#
+# Used standalone (workflow_dispatch) or by package.yaml (workflow_call).
+#
+# Runners: each OS host builds its own OS (x86_64 + aarch64).
+
+name: Build app
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: build-app-${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  app:
+    name: app (${{ matrix.os_label }}-${{ matrix.arch_label }})
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: [self-hosted, Linux, X64]
+            shell: bash
+            os_label: linux
+            arch_label: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            app_name: rockchip-universal-imager
+          - runner: [self-hosted, Linux, X64]
+            shell: bash
+            os_label: linux
+            arch_label: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+            app_name: rockchip-universal-imager
+          - runner: [self-hosted, Windows, X64]
+            shell: C:/msys64/usr/bin/bash.exe --noprofile --norc -e {0}
+            os_label: windows
+            arch_label: x86_64
+            rust_target: x86_64-pc-windows-msvc
+            app_name: rockchip-universal-imager.exe
+          - runner: [self-hosted, Windows, X64]
+            shell: C:/msys64/usr/bin/bash.exe --noprofile --norc -e {0}
+            os_label: windows
+            arch_label: aarch64
+            rust_target: aarch64-pc-windows-msvc
+            app_name: rockchip-universal-imager.exe
+          - runner: [self-hosted, macOS, X64]
+            shell: bash
+            os_label: macos
+            arch_label: x86_64
+            rust_target: x86_64-apple-darwin
+            app_name: rockchip-universal-imager
+          - runner: [self-hosted, macOS, X64]
+            shell: bash
+            os_label: macos
+            arch_label: aarch64
+            rust_target: aarch64-apple-darwin
+            app_name: rockchip-universal-imager
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Rust stable + target
+        env:
+          OS_LABEL: ${{ matrix.os_label }}
+        run: |
+          set -euo pipefail
+          source packaging/ci/ci-env.sh
+          cd "$(ci_workspace)"
+          ci_setup_toolchain_path "$OS_LABEL"
+          command -v rustup >/dev/null
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${{ matrix.rust_target }}"
+          rustc -vV
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: app-${{ matrix.os_label }}-${{ matrix.arch_label }}
+
+      - name: Install tauri-cli
+        env:
+          OS_LABEL: ${{ matrix.os_label }}
+        run: |
+          set -euo pipefail
+          source packaging/ci/ci-env.sh
+          cd "$(ci_workspace)"
+          ci_setup_toolchain_path "$OS_LABEL"
+          cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Tauri app (--no-bundle)
+        env:
+          OS_LABEL: ${{ matrix.os_label }}
+          ARCH_LABEL: ${{ matrix.arch_label }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          APP_NAME: ${{ matrix.app_name }}
+        run: |
+          set -euo pipefail
+          source packaging/ci/ci-env.sh
+          WS="$(ci_workspace)"
+          cd "$WS"
+          ci_setup_toolchain_path "$OS_LABEL"
+          case "$OS_LABEL-$ARCH_LABEL" in
+            linux-aarch64)
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-aarch64-linux-gnu-gcc}"
+              ;;
+            macos-x86_64)
+              export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="${CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER:-clang}"
+              export CFLAGS_x86_64_apple_darwin="${CFLAGS_x86_64_apple_darwin:--arch x86_64}"
+              ;;
+            macos-aarch64)
+              export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="${CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER:-clang}"
+              export CFLAGS_aarch64_apple_darwin="${CFLAGS_aarch64_apple_darwin:--arch arm64}"
+              ;;
+          esac
+          cargo tauri build --no-bundle --target "$RUST_TARGET"
+
+          APP_BIN="${WS}/src-tauri/target/${RUST_TARGET}/release/${APP_NAME}"
+          test -f "$APP_BIN"
+          OUT="${WS}/dist/app-${OS_LABEL}-${ARCH_LABEL}"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          cp "$APP_BIN" "$OUT/$APP_NAME"
+          chmod +x "$OUT/$APP_NAME" 2>/dev/null || true
+          {
+            echo "app artifact"
+            echo "os=$OS_LABEL arch=$ARCH_LABEL target=$RUST_TARGET"
+            echo "app_name=$APP_NAME"
+            echo "git_sha=${GITHUB_SHA:-unknown}"
+            date -u +"%Y-%m-%dT%H:%M:%SZ"
+            ls -la "$OUT"
+          } >"$OUT/APP.txt"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.os_label }}-${{ matrix.arch_label }}
+          path: dist/app-${{ matrix.os_label }}-${{ matrix.arch_label }}/
+          if-no-files-found: error

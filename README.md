@@ -98,41 +98,56 @@ rockchip-universal-imager…/
   README.txt        # installer payload only
 ```
 
-Packaging is defined **only in GitHub Actions** (no `packaging/*.sh` scripts):
+### Product layouts
 
-| Workflow | Artifact |
-|----------|----------|
-| `.github/workflows/portable.yml` | zip + `portable` marker |
-| `.github/workflows/installer.yml` | install-layout zip (no marker) |
+**Portable** and **installer payload** use the **same folder shape** (two
+binaries side by side + loaders). Only the zip wrapper differs:
 
-**Self-hosted runners** only. System toolchains are assumed pre-installed
-(full lists live in comments at the top of each workflow). CI only installs
-Rust pieces (`rustup` targets, `tauri-cli`, Cargo crates).
-
-Each OS runner builds **that OS only**, for host arch **and** aarch64:
-
-| Runner label | Artifacts |
-|--------------|-----------|
-| `[self-hosted, Linux, X64]` | `linux-x86_64`, `linux-aarch64` |
-| `[self-hosted, Windows, X64]` | `windows-x86_64`, `windows-aarch64` |
-| `[self-hosted, macOS, X64]` | `macos-x86_64`, `macos-aarch64` |
-
-Per matrix cell:
-
-1. Build `rkdeveloptool` (autotools; MinGW / llvm-mingw on Windows)
-2. `cargo tauri build --no-bundle --target <triple>`
-3. Stage folder + zip (inline in the workflow)
-4. Upload artifact
-
-Local equivalent (any OS with bash, for debugging):
-
-```bash
-# C++ companion (Unix example)
-cd dependencies/rkdeveloptool && ./autogen.sh && ./configure && make
-# Tauri app
-cargo tauri build --no-bundle
-# Then copy both binaries + loader_binaries/ into a folder and zip
+```
+rockchip-universal-imager…/
+  rockchip-universal-imager[.exe]
+  rkdeveloptool[.exe]          # static single-file companion
+  loader_binaries/
+  portable                     # portable zip only (empty marker file)
+  README.txt                   # installer payload only
 ```
 
-Native wrappers (NSIS / DMG / deb) can wrap the installer payload later;
+- **Portable** — run from that folder (no system install). Marker file
+  `portable` selects portable path behaviour for companions.
+- **Installer payload** — same two apps as a folder; a future NSIS/DMG/deb
+  copies that folder into OS program directories. No `portable` marker.
+
+**Logs** always go to OS user/system locations (portable *and* installed):
+
+| OS | Log directory |
+|----|----------------|
+| Windows | `%LOCALAPPDATA%\RockchipUniversalImager\logs` |
+| macOS | `~/Library/Logs/RockchipUniversalImager` |
+| Linux | `${XDG_STATE_HOME:-~/.local/state}/rockchip-universal-imager/logs` |
+
+### CI workflows (compile once → package)
+
+| Workflow | Role |
+|----------|------|
+| `build-rkdeveloptool.yaml` | Compile static companions (6 OS/arch) |
+| `build-app.yaml` | Compile Tauri app only (6 OS/arch) |
+| **`package.yaml`** | Runs **both** builds, then zips portable + installer for all cells |
+
+**Self-hosted** runners; bootstraps under `packaging/*/bootstrap-build-deps.*`.
+
+Typical release: **Actions → Package → Run workflow**.
+
+Iterate faster with **Build rkdeveloptool** or **Build app** alone.
+
+Local assemble (after you have both binaries):
+
+```bash
+# Stage like CI:
+mkdir -p dist/dev && cp app rkdeveloptool dist/dev/ && cp -R loader_binaries dist/dev/
+# Portable:
+: > dist/dev/portable
+# Logs still go to the system paths above, not dist/dev/logs
+```
+
+Native installers (NSIS / DMG / deb) can wrap the installer payload later;
 stubs live under `packaging/{windows,macos,linux}/`.

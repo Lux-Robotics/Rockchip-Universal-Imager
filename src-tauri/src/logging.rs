@@ -48,10 +48,9 @@ pub fn init() {
     ));
 }
 
+/// Log directory is always under the OS user/system log location (portable and
+/// installed builds alike). Portable only changes where the *binaries* live.
 pub fn log_directory() -> PathBuf {
-    if paths::is_portable_build() {
-        return paths::companion_dir().join("logs");
-    }
     if cfg!(target_os = "macos") {
         if let Some(home) = std::env::var_os("HOME") {
             return PathBuf::from(home).join("Library/Logs/RockchipUniversalImager");
@@ -70,7 +69,8 @@ pub fn log_directory() -> PathBuf {
             return PathBuf::from(home).join(".local/state/rockchip-universal-imager/logs");
         }
     }
-    paths::executable_dir().join("log")
+    // Last resort (unusual env without HOME / LOCALAPPDATA)
+    paths::executable_dir().join("logs")
 }
 
 fn next_log_path() -> PathBuf {

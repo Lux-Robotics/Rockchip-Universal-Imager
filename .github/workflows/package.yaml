@@ -1,0 +1,88 @@
+# Full distribution pipeline (common CI pattern: compile once → package).
+#
+#   package.yaml
+#     ├─ build-rkdeveloptool  (reusable) → rkdeveloptool-<os>-<arch>
+#     ├─ build-app            (reusable) → app-<os>-<arch>
+#     └─ package              (Linux)    → portable + installer zips for all cells
+#
+# Product layouts (same binary folder; packaging only differs by marker/README):
+#
+#   Portable zip  — folder with both apps + loader_binaries + empty `portable` file
+#                   (run from that folder; no system install)
+#   Installer zip — same two apps + loader_binaries + README (payload for a future
+#                   NSIS/DMG/deb that copies the folder into OS program dirs)
+#
+# Logs: always OS user/system log dirs (not next to the portable/install folder).
+#   See src-tauri/src/logging.rs
+#
+# You can still run Build rkdeveloptool / Build app alone for faster iteration.
+
+name: Package
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  companions:
+    name: Build rkdeveloptool
+    uses: ./.github/workflows/build-rkdeveloptool.yaml
+
+  apps:
+    name: Build app
+    uses: ./.github/workflows/build-app.yaml
+
+  package:
+    name: Assemble portable + installer
+    needs: [companions, apps]
+    # Assembly only (zip); binaries already match each OS/arch.
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Checkout (loader_binaries)
+        uses: actions/checkout@v4
+
+      - name: Download all rkdeveloptool artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rkdeveloptool-*
+          path: dist/in
+          merge-multiple: false
+
+      - name: Download all app artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: app-*
+          path: dist/in
+          merge-multiple: false
+
+      - name: Show downloaded layout
+        run: |
+          set -euo pipefail
+          find dist/in -type f | sort | head -80
+
+      - name: Package portable + installer zips
+        run: |
+          set -euo pipefail
+          chmod +x packaging/ci/package-dist.sh
+          packaging/ci/package-dist.sh
+
+      - name: Upload portable packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-all
+          path: dist/out/portable/*.zip
+          if-no-files-found: error
+
+      - name: Upload installer payloads
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-all
+          path: dist/out/installer/*.zip
+          if-no-files-found: error

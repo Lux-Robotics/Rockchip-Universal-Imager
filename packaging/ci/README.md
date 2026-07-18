@@ -1,11 +1,19 @@
-# Shared CI helpers
+# CI helpers
 
-These sit with the other packaging/bootstrap tooling.
+| File | Role |
+|------|------|
+| `ci-env.sh` | PATH / workspace helpers for bash steps on self-hosted runners |
+| `package-dist.sh` | Assemble portable + installer zips from prebuilt app + rkdeveloptool |
 
-| File | Used by |
-|------|---------|
-| `ci-env.sh` | Workflow bash steps (`source packaging/ci/ci-env.sh`) |
+## Workflows
 
-Windows steps run under MSYS2 bash (`MSYS2_BASH` from bootstrap). Linux/macOS use
-the runner’s normal `bash`. Bootstrap installs system toolchains only; this
-helper ships in the repo and is used after `actions/checkout`.
+```
+package.yaml
+  ├─ build-rkdeveloptool.yaml  → artifact rkdeveloptool-<os>-<arch>
+  ├─ build-app.yaml            → artifact app-<os>-<arch>
+  └─ package-dist.sh           → portable-all + installer-all zips
+```
+
+Portable vs installer: same two binaries + `loader_binaries/`; portable adds
+an empty `portable` marker file. Logs always use OS system directories (see
+`src-tauri/src/logging.rs`), not the app folder.

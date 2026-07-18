@@ -35,10 +35,12 @@ name: Build rkdeveloptool
 
 on:
   workflow_dispatch:
+  # Called by package.yaml so one pipeline can build companions + app + zips.
+  workflow_call:
 
 concurrency:
-  group: build-rkdeveloptool-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: build-rkdeveloptool-${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 env:
   # Always built from source and static-linked (every matrix cell).
