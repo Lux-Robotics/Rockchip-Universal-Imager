@@ -198,6 +198,10 @@ jobs:
                 export CFLAGS="${CFLAGS:-} ${ARCH_CFLAGS}"
                 export CXXFLAGS="${CXXFLAGS:-} ${ARCH_CFLAGS}"
                 export LDFLAGS="${LDFLAGS:-} ${ARCH_LDFLAGS}"
+                # Cross from Apple Silicon → Intel: configure must not try to run arm binaries.
+                if [[ "$(uname -m)" != "x86_64" ]]; then
+                  CONFIGURE_HOST="--host=x86_64-apple-darwin"
+                fi
                 ;;
               macos-aarch64)
                 export CC="${CC:-clang}"
@@ -207,15 +211,25 @@ jobs:
                 export CFLAGS="${CFLAGS:-} ${ARCH_CFLAGS}"
                 export CXXFLAGS="${CXXFLAGS:-} ${ARCH_CFLAGS}"
                 export LDFLAGS="${LDFLAGS:-} ${ARCH_LDFLAGS}"
+                # Cross from Intel → Apple Silicon: without --host, configure fails with
+                # "cannot run C compiled programs" (arm64 test binary on x86_64 host).
+                if [[ "$(uname -m)" != "arm64" ]]; then
+                  CONFIGURE_HOST="--host=aarch64-apple-darwin"
+                fi
                 ;;
               *)
                 echo "Unknown OS/arch: $OS_LABEL-$ARCH_LABEL" >&2
                 exit 1
                 ;;
             esac
+            # Apple Clang: rkdeveloptool uses -Werror; keep older VLA code from failing hard.
+            if [[ "$OS_LABEL" == "macos" ]]; then
+              export CXXFLAGS="${CXXFLAGS:-} -Wno-vla-cxx-extension -Wno-error=vla-cxx-extension"
+              export CFLAGS="${CFLAGS:-} -Wno-vla-cxx-extension -Wno-error=vla-cxx-extension"
+            fi
             need "$CC"
             need "$CXX"
-            echo "Using CC=$CC CXX=$CXX ${CONFIGURE_HOST:-}"
+            echo "Using CC=$CC CXX=$CXX host_uname=$(uname -m) ${CONFIGURE_HOST:-}"
           }
 
           select_compiler
@@ -326,20 +340,33 @@ jobs:
               return 0
             }
 
-            # Cross Windows aarch64: system MinGW64 libusb is x86_64 — build from source.
-            # Cross Linux aarch64: try host pkg-config with PKG_CONFIG_SYSROOT or build.
-            if [[ "$OS_LABEL-$ARCH_LABEL" == "windows-aarch64" ]]; then
-              echo "libusb: building from source for windows-aarch64 (llvm-mingw)"
-              build_libusb_from_source
-              return 0
-            fi
-
-            if [[ "$OS_LABEL-$ARCH_LABEL" == "linux-aarch64" ]]; then
-              # Cross pkg-config is unreliable; build a private static libusb.
-              echo "libusb: building from source for linux-aarch64 cross"
-              build_libusb_from_source
-              return 0
-            fi
+            # Cross targets: host pkg-config libusb is wrong arch — build matching static lib.
+            case "$OS_LABEL-$ARCH_LABEL" in
+              windows-aarch64)
+                echo "libusb: building from source for windows-aarch64 (llvm-mingw)"
+                build_libusb_from_source
+                return 0
+                ;;
+              linux-aarch64)
+                echo "libusb: building from source for linux-aarch64 cross"
+                build_libusb_from_source
+                return 0
+                ;;
+              macos-aarch64)
+                if [[ "$(uname -m)" != "arm64" ]]; then
+                  echo "libusb: building from source for macos-aarch64 cross (host=$(uname -m))"
+                  build_libusb_from_source
+                  return 0
+                fi
+                ;;
+              macos-x86_64)
+                if [[ "$(uname -m)" != "x86_64" ]]; then
+                  echo "libusb: building from source for macos-x86_64 cross (host=$(uname -m))"
+                  build_libusb_from_source
+                  return 0
+                fi
+                ;;
+            esac
 
             if try_pkg_static; then
               return 0

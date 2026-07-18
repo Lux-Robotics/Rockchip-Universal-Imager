@@ -218,13 +218,19 @@ jobs:
               ;;
             macos-x86_64)
               export CFLAGS="${CFLAGS:-} -arch x86_64"
-              export CXXFLAGS="${CXXFLAGS:-} -arch x86_64"
+              export CXXFLAGS="${CXXFLAGS:-} -arch x86_64 -Wno-vla-cxx-extension -Wno-error=vla-cxx-extension"
               export LDFLAGS="${LDFLAGS:-} -arch x86_64"
+              if [[ "$(uname -m)" != "x86_64" ]]; then
+                CONFIGURE_ARGS+=(--host=x86_64-apple-darwin)
+              fi
               ;;
             macos-aarch64)
               export CFLAGS="${CFLAGS:-} -arch arm64"
-              export CXXFLAGS="${CXXFLAGS:-} -arch arm64"
+              export CXXFLAGS="${CXXFLAGS:-} -arch arm64 -Wno-vla-cxx-extension -Wno-error=vla-cxx-extension"
               export LDFLAGS="${LDFLAGS:-} -arch arm64"
+              if [[ "$(uname -m)" != "arm64" ]]; then
+                CONFIGURE_ARGS+=(--host=aarch64-apple-darwin)
+              fi
               ;;
           esac
 
