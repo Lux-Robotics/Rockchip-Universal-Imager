@@ -7,7 +7,8 @@
 #
 # Installer:
 #   Windows: NSIS .exe  → Program Files\Rockchip Universal Imager\
-#   macOS:   DMG        → drag .app (companions beside .app) into /Applications
+#   macOS:   DMG        → drag "Rockchip Universal Imager" folder into /Applications
+#                         (folder holds .app + rkdeveloptool + loader_binaries/)
 #   Linux:   .deb       → /opt/rockchip-universal-imager/
 #
 # Logs always use OS user log dirs (not the install/portable folder).
@@ -96,6 +97,30 @@ if [[ "$OS_LABEL" == "macos" ]]; then
   if [[ "$(basename "$app_src")" != "$APP_BUNDLE" ]]; then
     mv "$stage/$(basename "$app_src")" "$stage/$APP_BUNDLE"
   fi
+  # GitHub Actions artifacts strip Unix execute bits. Without +x, LaunchServices
+  # fails with "The application can't be opened" / launchd spawn error 111.
+  app_macos="$stage/$APP_BUNDLE/Contents/MacOS"
+  if [[ -d "$app_macos" ]]; then
+    # Main binary + any bundled helpers/dylibs that need to load
+    find "$app_macos" -type f -exec chmod u+x {} +
+    # Mark Mach-O executables explicitly (idempotent)
+    if [[ -f "$app_macos/$APP_NAME" ]]; then
+      chmod +x "$app_macos/$APP_NAME"
+    fi
+  fi
+  # Re-sign after permission / copy mutations. Ad-hoc is enough for unsigned dist;
+  # linker-only signatures leave Info.plist unbound and break some open paths.
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --force --deep --sign - "$stage/$APP_BUNDLE"
+    codesign --verify --verbose=2 "$stage/$APP_BUNDLE" 2>&1 || true
+  fi
+  # Sanity: refuse to ship a non-executable main binary
+  main_bin="$app_macos/$APP_NAME"
+  if [[ -f "$main_bin" && ! -x "$main_bin" ]]; then
+    echo "ERROR: $main_bin is not executable after packaging" >&2
+    ls -la "$app_macos" >&2
+    exit 1
+  fi
 else
   app_bin="$(find_one_file "$app_dir" "$APP_NAME" "rockchip-universal-imager.exe" "rockchip-universal-imager")"
   test -f "$app_bin"
@@ -176,24 +201,13 @@ case "$OS_LABEL" in
   macos)
     out_dmg="${OUT_ROOT}/installer/rockchip-universal-imager-${OS_LABEL}-${ARCH_LABEL}.dmg"
     mkdir -p "$(dirname "$out_dmg")"
-    dmg_root="${OUT_ROOT}/installer/_dmg-${OS_LABEL}-${ARCH_LABEL}"
-    rm -rf "$dmg_root"
-    mkdir -p "$dmg_root"
-    # Drag-to-Applications layout: .app + companions + Applications link
-    cp -R "$stage/$APP_BUNDLE" "$dmg_root/"
-    cp "$stage/$RK_NAME" "$dmg_root/"
-    cp -R "$stage/loader_binaries" "$dmg_root/"
-    ln -sf /Applications "$dmg_root/Applications"
-    # Optional: small text for users about companions living next to the .app
-    rm -f "$out_dmg"
-    hdiutil create \
-      -volname "$PRODUCT_NAME" \
-      -srcfolder "$dmg_root" \
-      -ov -format UDZO \
-      "$out_dmg"
+    # Styled DMG: one install folder (app + companions) + Applications shortcut,
+    # arrow background, and drag instructions (see packaging/macos/make-dmg.sh).
+    make_dmg="$ROOT/packaging/macos/make-dmg.sh"
+    test -f "$make_dmg"
+    chmod +x "$make_dmg"
+    RK_NAME="$RK_NAME" "$make_dmg" "$stage" "$out_dmg" "$PRODUCT_NAME"
     test -f "$out_dmg"
-    echo "  installer -> $out_dmg"
-    rm -rf "$dmg_root"
     ;;
 
   linux)

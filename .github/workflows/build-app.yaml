@@ -177,6 +177,13 @@ jobs:
             if [[ "$(basename "$APP_PATH")" != "Rockchip Universal Imager.app" ]]; then
               mv "$OUT/$(basename "$APP_PATH")" "$OUT/Rockchip Universal Imager.app"
             fi
+            # Keep execute bits for the staged artifact (Actions zip can still
+            # drop them on download — package-cell.sh restores them again).
+            STAGED_APP="$OUT/Rockchip Universal Imager.app"
+            find "$STAGED_APP/Contents/MacOS" -type f -exec chmod u+x {} + 2>/dev/null || true
+            if command -v codesign >/dev/null 2>&1; then
+              codesign --force --deep --sign - "$STAGED_APP" || true
+            fi
           else
             cargo tauri build --no-bundle --target "$RUST_TARGET"
             APP_BIN="${WS}/src-tauri/target/${RUST_TARGET}/release/${APP_NAME}"

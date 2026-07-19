@@ -54,7 +54,7 @@ One installer **per OS/arch**:
 | Platform | Format | Installs to |
 |----------|--------|-------------|
 | **Windows** | NSIS `.exe` | `%ProgramFiles%\Rockchip Universal Imager\` |
-| **macOS** | `.dmg` (drag to Applications) | `/Applications` (+ companions beside the `.app` on the DMG) |
+| **macOS** | `.dmg` (drag folder to Applications) | `/Applications/Rockchip Universal Imager/` (`.app` + `rkdeveloptool` + `loader_binaries/`) |
 | **Linux** | `.deb` | `/opt/rockchip-universal-imager/` + desktop entry |
 
 ### Logs (always system dirs)
