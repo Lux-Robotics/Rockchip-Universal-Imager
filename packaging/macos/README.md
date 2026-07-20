@@ -18,29 +18,15 @@ Shared CI path helpers (used by GitHub Actions bash steps on all OSes):
 ## Packaging
 
 - **App build:** `cargo tauri build --bundles app` → `Rockchip Universal Imager.app`
-- **Embed companions** (done by `package-cell.sh`):
-  - `Contents/MacOS/rkdeveloptool`
-  - `Contents/Resources/loader_binaries/`
-- **Portable zip:** `.app` + `Allow and Open.command`
-- **Installer DMG:** `.app` + Applications symlink + `Allow and Open.command`
+- **Portable zip / DMG contents** (companions **beside** the `.app`, not inside it):
+  - `Rockchip Universal Imager.app`
+  - `rkdeveloptool`
+  - `loader_binaries/`
+- **Installer DMG:** same three items + Applications symlink
 
-Companions are embedded so App Translocation and single-item install still work.
-Do not rely on loose files next to the `.app` for release builds.
+The GUI looks for `rkdeveloptool` and `loader_binaries/` in the directory that
+contains the `.app`. Users must keep that layout after install.
 
-### End-user Gatekeeper helper
-
-Builds are **not Apple-notarized**. Ship `packaging/macos/Allow and Open.command`
-next to the app. Users should:
-
-1. Drag **Rockchip Universal Imager.app** into **Applications**
-2. Double-click **Allow and Open.command** (clears quarantine, refreshes ad-hoc
-   signature if possible, opens the app)
-
-Terminal equivalent:
-
-```bash
-xattr -dr com.apple.quarantine "/Applications/Rockchip Universal Imager.app"
-open "/Applications/Rockchip Universal Imager.app"
-```
+Gatekeeper / first-open steps for unsigned builds: see root `README.md`.
 
 Logs: `~/Library/Logs/RockchipUniversalImager`

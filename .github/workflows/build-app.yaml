@@ -69,6 +69,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # PATH changes only persist across steps via GITHUB_PATH. Without this,
+      # Swatinem/rust-cache fails with: Command failed: rustc -vV
       - name: Ensure Rust stable + target
         env:
           OS_LABEL: ${{ matrix.os_label }}
@@ -77,37 +79,16 @@ jobs:
           source packaging/ci/ci-env.sh
           cd "$(ci_workspace)"
           ci_setup_toolchain_path "$OS_LABEL"
-
-          CARGO_BIN="${CARGO_HOME:-${HOME:-}/.cargo}/bin"
-          if [[ -n "${USERPROFILE:-}" ]]; then
-            CARGO_BIN_WIN="$(ci_to_unix_path "${USERPROFILE}/.cargo/bin")"
-            ci_path_prepend "$CARGO_BIN_WIN"
-          fi
-          ci_path_prepend "$CARGO_BIN"
-          # shellcheck disable=SC1091
-          [[ -f "${CARGO_HOME:-$HOME/.cargo}/env" ]] && source "${CARGO_HOME:-$HOME/.cargo}/env"
-          export PATH="${CARGO_BIN}${CARGO_BIN_WIN:+:$CARGO_BIN_WIN}:$PATH"
-          hash -r 2>/dev/null || true
-
-          if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-              | sh -s -- -y --default-toolchain stable --profile minimal
-            # shellcheck disable=SC1091
-            source "$HOME/.cargo/env"
-            ci_path_prepend "$HOME/.cargo/bin"
-          fi
-
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add "${{ matrix.rust_target }}"
-          command -v rustc && rustc -vV
-          command -v cargo && cargo -vV
+          ci_ensure_rust "${{ matrix.rust_target }}"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        continue-on-error: true
         with:
           workspaces: src-tauri -> target
           shared-key: app-${{ matrix.os_label }}-${{ matrix.arch_label }}
+          # Self-hosted: keep caches on the runner; still hash lockfile for keys
+          cache-on-failure: true
 
       - name: Install tauri-cli
         env:
@@ -117,14 +98,13 @@ jobs:
           source packaging/ci/ci-env.sh
           cd "$(ci_workspace)"
           ci_setup_toolchain_path "$OS_LABEL"
-          CARGO_BIN="${CARGO_HOME:-${HOME:-}/.cargo}/bin"
-          ci_path_prepend "$CARGO_BIN"
-          if [[ -n "${USERPROFILE:-}" ]]; then
-            ci_path_prepend "$(ci_to_unix_path "${USERPROFILE}/.cargo/bin")"
+          ci_ensure_cargo_path
+          if ! command -v cargo-tauri >/dev/null 2>&1 && ! cargo tauri --version >/dev/null 2>&1; then
+            cargo install tauri-cli --version "^2" --locked
+          else
+            echo "tauri-cli already available: $(cargo tauri --version 2>/dev/null || true)"
           fi
-          # shellcheck disable=SC1091
-          [[ -f "${CARGO_HOME:-$HOME/.cargo}/env" ]] && source "${CARGO_HOME:-$HOME/.cargo}/env"
-          cargo install tauri-cli --version "^2" --locked
+          cargo tauri --version
 
       - name: Build Tauri app
         env:
@@ -138,13 +118,11 @@ jobs:
           WS="$(ci_workspace)"
           cd "$WS"
           ci_setup_toolchain_path "$OS_LABEL"
-          CARGO_BIN="${CARGO_HOME:-${HOME:-}/.cargo}/bin"
-          ci_path_prepend "$CARGO_BIN"
-          if [[ -n "${USERPROFILE:-}" ]]; then
-            ci_path_prepend "$(ci_to_unix_path "${USERPROFILE}/.cargo/bin")"
-          fi
-          # shellcheck disable=SC1091
-          [[ -f "${CARGO_HOME:-$HOME/.cargo}/env" ]] && source "${CARGO_HOME:-$HOME/.cargo}/env"
+          ci_ensure_cargo_path
+
+          command -v rustc
+          command -v cargo
+          rustc -vV
 
           case "$OS_LABEL-$ARCH_LABEL" in
             macos-x86_64)
@@ -202,7 +180,7 @@ jobs:
           } >"$OUT/APP.txt"
 
       - name: Upload app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: app-${{ matrix.os_label }}-${{ matrix.arch_label }}
           path: dist/app-${{ matrix.os_label }}-${{ matrix.arch_label }}/

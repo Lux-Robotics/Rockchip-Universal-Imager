@@ -399,7 +399,7 @@ jobs:
           cat "$STAGE/BUILD.txt"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: rkdeveloptool-${{ matrix.os_label }}-${{ matrix.arch_label }}
           path: dist/rkdeveloptool-${{ matrix.os_label }}-${{ matrix.arch_label }}/

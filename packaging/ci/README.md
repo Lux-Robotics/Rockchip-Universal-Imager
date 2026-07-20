@@ -16,7 +16,7 @@ package.yaml
 
 ### Portable zip contents
 
-- **macOS:** `.app` + `Allow and Open.command` (companions embedded in the bundle)
+- **macOS:** `Rockchip Universal Imager.app` + `rkdeveloptool` + `loader_binaries/`
 - **Windows/Linux:** app binary + `rkdeveloptool` + `loader_binaries/`
 
 No `portable` marker.
@@ -26,7 +26,7 @@ No `portable` marker.
 | OS | Tool | Output |
 |----|------|--------|
 | Windows | NSIS (`makensis`) | `*-setup.exe` |
-| macOS | `hdiutil` | `*.dmg` (`.app` + Applications link + `Allow and Open.command`) |
+| macOS | `hdiutil` | `*.dmg` (`.app` + companions + Applications symlink) |
 | Linux | `dpkg-deb` | `*.deb` → `/opt/rockchip-universal-imager` |
 
 ### App matrix note

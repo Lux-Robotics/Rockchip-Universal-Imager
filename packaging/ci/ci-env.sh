@@ -275,5 +275,123 @@ ci_setup_toolchain_path() {
   esac
 }
 
+# Append a directory to GITHUB_PATH so later Actions steps inherit it.
+# Writes Unix path (MSYS/bash) and Windows path when possible (runner service).
+ci_github_path_add() {
+  local dir="$1"
+  [[ -n "$dir" ]] || return 0
+  # Expand ~ if present
+  [[ "$dir" == ~* ]] && dir="${dir/#\~/$HOME}"
+  [[ -d "$dir" ]] || return 0
+  if [[ -n "${GITHUB_PATH:-}" ]]; then
+    echo "$dir" >>"$GITHUB_PATH"
+    if command -v cygpath >/dev/null 2>&1; then
+      local win
+      win="$(cygpath -w "$dir" 2>/dev/null || true)"
+      if [[ -n "$win" ]]; then
+        echo "$win" >>"$GITHUB_PATH"
+      fi
+    fi
+  fi
+  ci_path_prepend "$dir"
+}
+
+# Cargo/rustup bin dirs for this runner (Unix paths).
+ci_cargo_bin_dirs() {
+  local dirs=()
+  if [[ -n "${CARGO_HOME:-}" ]]; then
+    dirs+=("$(ci_to_unix_path "${CARGO_HOME}/bin")")
+  fi
+  if [[ -n "${HOME:-}" ]]; then
+    dirs+=("${HOME}/.cargo/bin")
+  fi
+  if [[ -n "${USERPROFILE:-}" ]]; then
+    dirs+=("$(ci_to_unix_path "${USERPROFILE}/.cargo/bin")")
+  fi
+  # MSYS often uses /home/runner vs /c/Users/...
+  if [[ -d /c/Users ]]; then
+    local u
+    for u in /c/Users/*/.cargo/bin; do
+      [[ -d "$u" ]] && dirs+=("$u")
+    done
+  fi
+  local d seen=""
+  for d in "${dirs[@]}"; do
+    [[ -n "$d" && -d "$d" ]] || continue
+    case " $seen " in
+      *" $d "*) continue ;;
+    esac
+    seen+=" $d"
+    printf '%s\n' "$d"
+  done
+}
+
+# Put cargo/bin on PATH + GITHUB_PATH; source rustup env if present.
+ci_ensure_cargo_path() {
+  local d envf
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    ci_github_path_add "$d"
+  done < <(ci_cargo_bin_dirs)
+
+  for envf in "${CARGO_HOME:-}/env" "${HOME:-}/.cargo/env"; do
+    [[ -n "$envf" && -f "$envf" ]] || continue
+    # shellcheck disable=SC1090
+    source "$envf" 2>/dev/null || true
+  done
+  if [[ -n "${USERPROFILE:-}" ]]; then
+    envf="$(ci_to_unix_path "${USERPROFILE}/.cargo/env")"
+    if [[ -f "$envf" ]]; then
+      # shellcheck disable=SC1090
+      source "$envf" 2>/dev/null || true
+    fi
+  fi
+  hash -r 2>/dev/null || true
+}
+
+# Install rustup (if needed) + stable toolchain + optional target; export PATH for later steps.
+# Usage: ci_ensure_rust [target-triple]
+ci_ensure_rust() {
+  local target="${1:-}"
+  ci_ensure_cargo_path
+
+  if ! command -v rustup >/dev/null 2>&1; then
+    echo "ci-env: installing rustup…"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --profile minimal
+    ci_ensure_cargo_path
+  fi
+
+  if ! command -v rustup >/dev/null 2>&1; then
+    echo "ERROR: rustup not on PATH after install" >&2
+    echo "PATH=$PATH" >&2
+    ci_cargo_bin_dirs >&2 || true
+    exit 1
+  fi
+
+  rustup toolchain install stable --profile minimal
+  rustup default stable
+  if [[ -n "$target" ]]; then
+    rustup target add "$target"
+  fi
+
+  # Persist for subsequent Actions steps (rust-cache, build, …)
+  ci_ensure_cargo_path
+
+  if ! command -v rustc >/dev/null 2>&1; then
+    echo "ERROR: rustc not found after rustup setup" >&2
+    rustup which rustc || true
+    echo "PATH=$PATH" >&2
+    exit 1
+  fi
+
+  # Prefer rustup-managed rustc when "rustc" is a broken shim
+  local rustc_bin
+  rustc_bin="$(rustup which rustc 2>/dev/null || command -v rustc)"
+  echo "ci-env: rustc=$rustc_bin"
+  "$rustc_bin" -vV
+  cargo -vV
+}
+
 # Run path bootstrap on source so ci_workspace/tr fixes apply immediately.
 ci_bootstrap_msys_path

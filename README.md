@@ -42,16 +42,18 @@ One zip **per OS/arch** containing only:
 
 | Platform | Contents |
 |----------|----------|
-| **macOS** | `.app` + `Allow and Open.command` (companions embedded in the `.app`) |
+| **macOS** | `Rockchip Universal Imager.app` + `rkdeveloptool` + `loader_binaries/` |
 | **Windows / Linux** | `rockchip-universal-imager[.exe]` + `rkdeveloptool[.exe]` + `loader_binaries/` |
 
-No `portable` marker file. Extract and run.
+No `portable` marker file. Extract and run. Keep the three macOS items **together** (companions must sit next to the `.app`).
 
-**macOS first launch (unsigned build):** drag the `.app` to Applications (or use the portable folder), then double‑click **`Allow and Open.command`**. That clears Gatekeeper quarantine and opens the app. Equivalent Terminal:
+**macOS first launch (unsigned build):** builds are not Apple-notarized. After download:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Rockchip Universal Imager.app"
-open "/Applications/Rockchip Universal Imager.app"
+# From the folder that contains the .app, rkdeveloptool, and loader_binaries/
+xattr -dr com.apple.quarantine "Rockchip Universal Imager.app" rkdeveloptool loader_binaries
+chmod +x "Rockchip Universal Imager.app/Contents/MacOS/rockchip-universal-imager" rkdeveloptool
+open "Rockchip Universal Imager.app"
 ```
 
 If macOS still blocks it: **System Settings → Privacy & Security → Open Anyway**, or right‑click the app → **Open**.
@@ -63,7 +65,7 @@ One installer **per OS/arch**:
 | Platform | Format | Installs to |
 |----------|--------|-------------|
 | **Windows** | NSIS `.exe` | `%ProgramFiles%\Rockchip Universal Imager\` |
-| **macOS** | `.dmg` (drag `.app` → Applications, then **Allow and Open.command**) | `/Applications/Rockchip Universal Imager.app` |
+| **macOS** | `.dmg` (drag `.app` **and** companions into `/Applications`, or keep them together) | `/Applications` (`.app` + `rkdeveloptool` + `loader_binaries/` beside each other) |
 | **Linux** | `.deb` | `/opt/rockchip-universal-imager/` + desktop entry |
 
 ### Logs (always system dirs)

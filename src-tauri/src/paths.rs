@@ -1,9 +1,9 @@
 //! Resolve app / companion / resource directories (portable-first layout).
 //!
-//! **macOS:** companions (`rkdeveloptool`, `loader_binaries/`) are packaged
-//! *inside* the `.app` bundle (`Contents/MacOS` and `Contents/Resources`) so they
-//! survive App Translocation and single-item drag-install. Loose files next to
-//! the `.app` are still accepted for older portable layouts and local dev.
+//! **macOS:** release packaging keeps companions *beside* the `.app`
+//! (`rkdeveloptool` + `loader_binaries/` next to `Rockchip Universal Imager.app`).
+//! Paths also accept companions inside the bundle (`Contents/MacOS`,
+//! `Contents/Resources`) for local/dev convenience.
 
 use std::path::{Path, PathBuf};
 
