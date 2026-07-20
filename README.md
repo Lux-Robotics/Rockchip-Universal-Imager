@@ -42,10 +42,19 @@ One zip **per OS/arch** containing only:
 
 | Platform | Contents |
 |----------|----------|
-| **macOS** | `Rockchip Universal Imager.app` + `rkdeveloptool` + `loader_binaries/` |
+| **macOS** | `.app` + `Allow and Open.command` (companions embedded in the `.app`) |
 | **Windows / Linux** | `rockchip-universal-imager[.exe]` + `rkdeveloptool[.exe]` + `loader_binaries/` |
 
-No `portable` marker file, no README. Extract and run.
+No `portable` marker file. Extract and run.
+
+**macOS first launch (unsigned build):** drag the `.app` to Applications (or use the portable folder), then double‑click **`Allow and Open.command`**. That clears Gatekeeper quarantine and opens the app. Equivalent Terminal:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Rockchip Universal Imager.app"
+open "/Applications/Rockchip Universal Imager.app"
+```
+
+If macOS still blocks it: **System Settings → Privacy & Security → Open Anyway**, or right‑click the app → **Open**.
 
 ### Installer (real installers)
 
@@ -54,7 +63,7 @@ One installer **per OS/arch**:
 | Platform | Format | Installs to |
 |----------|--------|-------------|
 | **Windows** | NSIS `.exe` | `%ProgramFiles%\Rockchip Universal Imager\` |
-| **macOS** | `.dmg` (drag folder to Applications) | `/Applications/Rockchip Universal Imager/` (`.app` + `rkdeveloptool` + `loader_binaries/`) |
+| **macOS** | `.dmg` (drag `.app` → Applications, then **Allow and Open.command**) | `/Applications/Rockchip Universal Imager.app` |
 | **Linux** | `.deb` | `/opt/rockchip-universal-imager/` + desktop entry |
 
 ### Logs (always system dirs)

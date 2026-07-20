@@ -3,12 +3,12 @@
 #
 # Portable (no markers/README): zip of
 #   Windows/Linux: app binary + rkdeveloptool + loader_binaries/
-#   macOS:         Rockchip Universal Imager.app + rkdeveloptool + loader_binaries/
+#   macOS:         Rockchip Universal Imager.app + Allow and Open.command
+#                  (rkdeveloptool + loader_binaries/ embedded inside the .app)
 #
 # Installer:
 #   Windows: NSIS .exe  → Program Files\Rockchip Universal Imager\
-#   macOS:   DMG        → drag "Rockchip Universal Imager" folder into /Applications
-#                         (folder holds .app + rkdeveloptool + loader_binaries/)
+#   macOS:   DMG        → drag .app into /Applications, then run Allow and Open.command
 #   Linux:   .deb       → /opt/rockchip-universal-imager/
 #
 # Logs always use OS user log dirs (not the install/portable folder).
@@ -87,7 +87,7 @@ test -f "$rk_bin"
 
 stage="${OUT_ROOT}/staging/${OS_LABEL}-${ARCH_LABEL}"
 rm -rf "$stage"
-mkdir -p "$stage/loader_binaries"
+mkdir -p "$stage"
 
 if [[ "$OS_LABEL" == "macos" ]]; then
   app_src="$(find_app_bundle "$app_dir")"
@@ -97,42 +97,67 @@ if [[ "$OS_LABEL" == "macos" ]]; then
   if [[ "$(basename "$app_src")" != "$APP_BUNDLE" ]]; then
     mv "$stage/$(basename "$app_src")" "$stage/$APP_BUNDLE"
   fi
+
+  app_macos="$stage/$APP_BUNDLE/Contents/MacOS"
+  app_resources="$stage/$APP_BUNDLE/Contents/Resources"
+  mkdir -p "$app_macos" "$app_resources"
+
+  # Embed companions *inside* the .app so App Translocation and single-item
+  # drag-install still find rkdeveloptool + loaders.
+  cp "$rk_bin" "$app_macos/$RK_NAME"
+  chmod +x "$app_macos/$RK_NAME"
+  mkdir -p "$app_resources/loader_binaries"
+  if [[ -d "$LOADER_SRC" ]]; then
+    cp -R "$LOADER_SRC"/. "$app_resources/loader_binaries/" 2>/dev/null || true
+  fi
+
   # GitHub Actions artifacts strip Unix execute bits. Without +x, LaunchServices
   # fails with "The application can't be opened" / launchd spawn error 111.
-  app_macos="$stage/$APP_BUNDLE/Contents/MacOS"
-  if [[ -d "$app_macos" ]]; then
-    # Main binary + any bundled helpers/dylibs that need to load
-    find "$app_macos" -type f -exec chmod u+x {} +
-    # Mark Mach-O executables explicitly (idempotent)
-    if [[ -f "$app_macos/$APP_NAME" ]]; then
-      chmod +x "$app_macos/$APP_NAME"
-    fi
+  find "$app_macos" -type f -exec chmod u+x {} +
+  if [[ -f "$app_macos/$APP_NAME" ]]; then
+    chmod +x "$app_macos/$APP_NAME"
   fi
-  # Re-sign after permission / copy mutations. Ad-hoc is enough for unsigned dist;
-  # linker-only signatures leave Info.plist unbound and break some open paths.
+
+  # Re-sign after embed / permission mutations. Ad-hoc is enough for unsigned dist.
   if command -v codesign >/dev/null 2>&1; then
     codesign --force --deep --sign - "$stage/$APP_BUNDLE"
     codesign --verify --verbose=2 "$stage/$APP_BUNDLE" 2>&1 || true
   fi
-  # Sanity: refuse to ship a non-executable main binary
+
   main_bin="$app_macos/$APP_NAME"
   if [[ -f "$main_bin" && ! -x "$main_bin" ]]; then
     echo "ERROR: $main_bin is not executable after packaging" >&2
     ls -la "$app_macos" >&2
     exit 1
   fi
+  if [[ ! -f "$app_macos/$RK_NAME" || ! -x "$app_macos/$RK_NAME" ]]; then
+    echo "ERROR: embedded $RK_NAME missing or not executable" >&2
+    ls -la "$app_macos" >&2
+    exit 1
+  fi
+  echo "  embedded companions in $APP_BUNDLE:"
+  ls -la "$app_macos/$RK_NAME" "$app_resources/loader_binaries" 2>/dev/null || true
+
+  # Gatekeeper helper: end-user double-clicks to clear quarantine and open the app
+  # (unsigned/ad-hoc builds are not Apple-notarized).
+  allow_src="$ROOT/packaging/macos/Allow and Open.command"
+  if [[ -f "$allow_src" ]]; then
+    cp "$allow_src" "$stage/Allow and Open.command"
+    chmod +x "$stage/Allow and Open.command"
+  else
+    echo "WARNING: missing $allow_src" >&2
+  fi
 else
+  mkdir -p "$stage/loader_binaries"
   app_bin="$(find_one_file "$app_dir" "$APP_NAME" "rockchip-universal-imager.exe" "rockchip-universal-imager")"
   test -f "$app_bin"
   cp "$app_bin" "$stage/$APP_NAME"
   chmod +x "$stage/$APP_NAME" 2>/dev/null || true
-fi
-
-cp "$rk_bin" "$stage/$RK_NAME"
-chmod +x "$stage/$RK_NAME" 2>/dev/null || true
-
-if [[ -d "$LOADER_SRC" ]]; then
-  cp -R "$LOADER_SRC"/. "$stage/loader_binaries/" 2>/dev/null || true
+  cp "$rk_bin" "$stage/$RK_NAME"
+  chmod +x "$stage/$RK_NAME" 2>/dev/null || true
+  if [[ -d "$LOADER_SRC" ]]; then
+    cp -R "$LOADER_SRC"/. "$stage/loader_binaries/" 2>/dev/null || true
+  fi
 fi
 
 # No portable marker, no README — just the apps + loaders.
@@ -199,15 +224,28 @@ case "$OS_LABEL" in
     ;;
 
   macos)
+    # Classic drag-install: self-contained .app + Applications link + Gatekeeper helper.
+    # Companions are already embedded inside the .app (see staging above).
     out_dmg="${OUT_ROOT}/installer/rockchip-universal-imager-${OS_LABEL}-${ARCH_LABEL}.dmg"
     mkdir -p "$(dirname "$out_dmg")"
-    # Styled DMG: one install folder (app + companions) + Applications shortcut,
-    # arrow background, and drag instructions (see packaging/macos/make-dmg.sh).
-    make_dmg="$ROOT/packaging/macos/make-dmg.sh"
-    test -f "$make_dmg"
-    chmod +x "$make_dmg"
-    RK_NAME="$RK_NAME" "$make_dmg" "$stage" "$out_dmg" "$PRODUCT_NAME"
+    dmg_root="${OUT_ROOT}/installer/_dmg-${OS_LABEL}-${ARCH_LABEL}"
+    rm -rf "$dmg_root"
+    mkdir -p "$dmg_root"
+    cp -R "$stage/$APP_BUNDLE" "$dmg_root/"
+    ln -sf /Applications "$dmg_root/Applications"
+    if [[ -f "$stage/Allow and Open.command" ]]; then
+      cp "$stage/Allow and Open.command" "$dmg_root/"
+      chmod +x "$dmg_root/Allow and Open.command"
+    fi
+    rm -f "$out_dmg"
+    hdiutil create \
+      -volname "$PRODUCT_NAME" \
+      -srcfolder "$dmg_root" \
+      -ov -format UDZO \
+      "$out_dmg"
     test -f "$out_dmg"
+    echo "  installer -> $out_dmg"
+    rm -rf "$dmg_root"
     ;;
 
   linux)
