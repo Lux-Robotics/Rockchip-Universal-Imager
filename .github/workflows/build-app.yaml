@@ -18,8 +18,8 @@ on:
   workflow_call:
 
 concurrency:
-  group: build-app-${{ github.workflow }}-${{ github.run_id }}
-  cancel-in-progress: false
+  group: build-app-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

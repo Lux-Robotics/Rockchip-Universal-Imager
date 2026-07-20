@@ -39,8 +39,8 @@ on:
   workflow_call:
 
 concurrency:
-  group: build-rkdeveloptool-${{ github.workflow }}-${{ github.run_id }}
-  cancel-in-progress: false
+  group: build-rkdeveloptool-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # Always built from source and static-linked (every matrix cell).
